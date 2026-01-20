@@ -1,0 +1,256 @@
+
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Amazon Qena FDDS | Performance Center</title>
+    <link rel="icon" type="image/png" href="https://upload.wikimedia.org/wikipedia/commons/d/de/Amazon_icon.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+          darkMode: 'class',
+          theme: {
+            extend: {
+              colors: {
+                dark: {
+                  bg: '#0F1111',
+                  card: '#191E26',
+                  border: '#2A2F3A'
+                }
+              }
+            }
+          }
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Amazon+Ember:wght@400;500;700;900&family=Noto+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        :root {
+            --amz-dark: #232F3E;
+            --amz-light: #37475A;
+            --amz-orange: #FF9900;
+            --amz-blue: #007185;
+        }
+        
+        body { 
+            font-family: 'Noto Sans Arabic', sans-serif; 
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Dark Mode Transitions */
+        body, .modern-card, .glass-header {
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+        }
+
+        /* Modern Glass Effect */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+        }
+        
+        .dark .glass-panel {
+            background: rgba(30, 30, 30, 0.9);
+            border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .glass-header {
+            background: rgba(35, 47, 62, 0.95);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* Buttons */
+        .btn-amz-primary {
+            background: linear-gradient(to bottom, #FFD814, #FCD200);
+            border: 1px solid #FCD200;
+            color: #0F1111;
+            box-shadow: 0 2px 5px rgba(213,217,217,0.5);
+            transition: all 0.2s ease;
+        }
+        .btn-amz-primary:hover {
+            background: #F7CA00;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 12px rgba(0,0,0,0.15);
+        }
+        .btn-amz-primary:active { transform: translateY(0); }
+        
+        .btn-amz-dark {
+            background: var(--amz-dark);
+            color: white;
+            transition: all 0.2s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .btn-amz-dark:hover {
+            background: #485769;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+        }
+
+        /* Animations */
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes pulse-soft { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
+        @keyframes float { 0% { transform: translateY(0px); } 50% { transform: translateY(-10px); } 100% { transform: translateY(0px); } }
+
+        .animate-fade-in { animation: fadeIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+        .animate-slide-up { animation: slideUp 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+        .animate-pulse-soft { animation: pulse-soft 2s infinite ease-in-out; }
+        .animate-float { animation: float 3s ease-in-out infinite; }
+
+        /* Card Styles */
+        .modern-card {
+            background: white;
+            border-radius: 16px;
+            border: 1px solid rgba(0,0,0,0.04);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .dark .modern-card {
+            background: #191E26;
+            border-color: #2A2F3A;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+        }
+
+        .modern-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        /* Table Styles */
+        .custom-table th { 
+            background-color: #f8fafc;
+            color: #475569;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 1rem;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        .dark .custom-table th {
+            background-color: #232F3E;
+            color: #94A3B8;
+            border-bottom-color: #37475A;
+        }
+
+        .custom-table td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #f1f5f9;
+            font-size: 0.9rem;
+            transition: background 0.1s;
+        }
+        
+        .dark .custom-table td {
+            border-bottom-color: #2A2F3A;
+            color: #E2E8F0;
+        }
+
+        .custom-table tr:hover td { background-color: #fcfeff; }
+        .dark .custom-table tr:hover td { background-color: #2A2F3A; }
+        
+        .editable-input {
+            background: transparent;
+            text-align: center;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            width: 100%;
+            font-weight: 700;
+            transition: all 0.2s;
+        }
+        .editable-input:hover, .editable-input:focus {
+            background: #fff;
+            border-color: #e2e8f0;
+            box-shadow: 0 0 0 2px rgba(255, 153, 0, 0.2);
+        }
+        
+        .dark .editable-input:hover, .dark .editable-input:focus {
+            background: #0F1111;
+            border-color: #37475A;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; border: 2px solid #f3f4f6; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        .dark ::-webkit-scrollbar-thumb { background: #37475A; border-color: #191E26; }
+        .dark ::-webkit-scrollbar-thumb:hover { background: #485769; }
+
+        /* Export Mode */
+        #table-container.capturing {
+            width: 1000px !important;
+            padding: 20px !important;
+            background: white !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+        }
+        
+        /* Ensure export is always light mode for printability */
+        .dark #table-container.capturing {
+            background: white !important;
+            color: black !important;
+        }
+        .dark #table-container.capturing td, .dark #table-container.capturing th {
+            color: black !important;
+            border-color: #eee !important;
+            background: white !important;
+        }
+
+        #table-container.capturing .no-print { display: none !important; }
+        #table-container.capturing .card-view { display: none !important; }
+        #table-container.capturing .table-view { display: table !important; }
+
+        .modal-overlay {
+            backdrop-filter: blur(8px);
+            background: rgba(15, 23, 42, 0.6);
+        }
+        
+        .dark .modal-overlay {
+            background: rgba(0, 0, 0, 0.8);
+        }
+        
+        /* Full Screen Presentation Mode */
+        .presentation-mode {
+            background-color: #1a202c !important;
+            color: #fff !important;
+        }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "firebase/": "https://esm.sh/firebase@^12.7.0/",
+    "exceljs": "https://esm.sh/exceljs@^4.4.0",
+    "html2canvas": "https://esm.sh/html2canvas@^1.4.1",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom": "https://esm.sh/react-dom@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "xlsx": "https://esm.sh/xlsx@^0.18.5",
+    "chart.js/auto": "https://esm.sh/chart.js/auto",
+    "react-chartjs-2": "https://esm.sh/react-chartjs-2",
+    "chart.js/": "https://esm.sh/chart.js@^4.5.1/",
+    "canvas-confetti": "https://esm.sh/canvas-confetti@1.6.0",
+    "jspdf": "https://esm.sh/jspdf@^4.0.0",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "@google/genai": "https://esm.sh/@google/genai@^1.36.0"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body class="bg-[#f3f4f6] dark:bg-[#0F1111] dark:text-gray-100 transition-colors duration-300">
+    <div id="root"></div>
+    <script type="module" src="./index.tsx"></script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>

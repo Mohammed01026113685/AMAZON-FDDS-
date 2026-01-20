@@ -1,0 +1,5 @@
+{
+  "name": "Copy of LogiTrack - Logistics Dashboard Automator",
+  "description": "A specialized tool for logistics supervisors to automatically transform raw Excel shipment data into performance summary dashboards. Specifically designed for Bosta/Amazon Egypt tracking formats to track delivery agent (DA) performance including Delivered, Failed, OFD, and RTO metrics.",
+  "requestFramePermissions": []
+}
