@@ -1,4 +1,3 @@
-
 import React, { useState, useTransition, useMemo, useEffect, useCallback, Suspense } from 'react';
 import DropZone from './components/DropZone';
 import SummaryTable from './components/SummaryTable';
@@ -10,7 +9,7 @@ import CustomDialog from './components/CustomDialog';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { processShipments, cleanName } from './services/excelProcessor';
 import { exportToExcel, exportAsImage, exportToPDF } from './services/exportService';
-import { saveDailyRecord, fetchHistory, loginUser, logoutUser, subscribeToAuth, deleteDailyRecord, isUserAdmin, fetchAliases, updateDailyRecord, ADMIN_EMAIL, saveAliases, isMock } from './services/firebase';
+import { saveDailyRecord, fetchHistory, loginUser, logoutUser, subscribeToAuth, deleteDailyRecord, isUserAdmin, fetchAliases, updateDailyRecord, saveAliases, isMock } from './services/firebase';
 import { ProcessedResult, DASummary, HistoryRecord, TrackingDetail } from './types';
 import { User } from 'firebase/auth';
 import confetti from 'canvas-confetti';
@@ -19,8 +18,11 @@ import { useSettings } from './contexts/SettingsContext';
 // Lazy Load Heavy Components
 const HistoryDashboard = React.lazy(() => import('./components/HistoryDashboard'));
 
+// --- DEFINE SUPER ADMIN EMAIL ---
+const SUPER_ADMIN_EMAIL = 'mohammedhashmed88@gmail.com';
+
 // --- WELCOME BANNER COMPONENT ---
-const WelcomeBanner: React.FC<{ user: User | null, data: ProcessedResult | null, dir: string }> = ({ user, data, dir }) => {
+const WelcomeBanner: React.FC<{ user: User | null, data: ProcessedResult | null, dir: string, isSuperAdmin: boolean }> = ({ user, data, dir, isSuperAdmin }) => {
     const [greeting, setGreeting] = useState('');
     const [time, setTime] = useState('');
 
@@ -55,10 +57,11 @@ const WelcomeBanner: React.FC<{ user: User | null, data: ProcessedResult | null,
                         </div>
                         <div>
                             <div className="flex items-center gap-3 mb-1">
-                                <h2 className="text-2xl md:text-3xl font-black tracking-tight">{greeting}, {user ? (user.email === ADMIN_EMAIL ? 'Admin' : 'Captain') : 'Guest'}</h2>
+                                <h2 className="text-2xl md:text-3xl font-black tracking-tight">{greeting}, {user ? (isSuperAdmin ? ' Admin' : isUserAdmin(user) ? 'Admin' : 'Captain') : 'Guest'}</h2>
                                 <span className="bg-[#FF9900] text-[#232F3E] text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">{time}</span>
                             </div>
                             <p className="text-gray-400 text-sm font-medium">
+                                {user ? (isSuperAdmin ? ' System Administrator' : isUserAdmin(user) ? 'System Administrator' : 'Delivery Captain') : 'Guest Mode'}
                             </p>
                         </div>
                     </div>
@@ -227,8 +230,11 @@ const App: React.FC = () => {
   useEffect(() => {
     const unsubscribe = subscribeToAuth((currentUser) => {
       setUser(currentUser);
-      setIsAdmin(isUserAdmin(currentUser));
-      setIsSuperAdmin(currentUser?.email === ADMIN_EMAIL);
+      const adminStatus = isUserAdmin(currentUser);
+      setIsAdmin(adminStatus);
+      // تحقق إذا كان المشرف الرئيسي
+      const superAdminStatus = currentUser?.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
+      setIsSuperAdmin(superAdminStatus);
       setIsAuthLoading(false);
       if (currentUser) {
         loadHistoryData();
@@ -330,7 +336,7 @@ const App: React.FC = () => {
   };
 
   const handleArchiveToday = async () => {
-    if (!data || !user) return;
+    if (!data || !user || !isSuperAdmin) return;
     
     const saveAction = async () => {
         const record: HistoryRecord = {
@@ -685,7 +691,8 @@ const App: React.FC = () => {
                    {user ? (
                        <>
                          <div className="flex gap-2">
-                             {isAdmin && (
+                             {/* === التغيير: عرض أزرار الإدارة فقط للمشرف الرئيسي === */}
+                             {isSuperAdmin && (
                                 <>
                                  <button onClick={() => setShowAliasManagement(true)} className="bg-[#37475A] hover:bg-[#485769] w-8 h-8 rounded-full flex items-center justify-center transition-all border border-gray-600 shadow-lg group relative" title={t('aliases')}>
                                      <i className="fa-solid fa-shuffle text-white text-xs"></i>
@@ -696,6 +703,16 @@ const App: React.FC = () => {
                                  </button>
                                 </>
                              )}
+                             
+                             {/* بادج المشرف الرئيسي */}
+                             {isSuperAdmin && (
+                                 <div className="relative group">
+                                     <div className="absolute -top-2 -right-2 w-5 h-5 bg-gradient-to-r from-[#FF9900] to-[#FFD814] rounded-full flex items-center justify-center border-2 border-[#232F3E] shadow-lg animate-pulse z-20">
+                                         <i className="fa-solid fa-crown text-[9px] text-[#232F3E]"></i>
+                                     </div>
+                                 </div>
+                             )}
+                             
                              <button onClick={handleLogout} className="bg-[#37475A] hover:bg-red-600 w-8 h-8 rounded-full flex items-center justify-center transition-all border border-gray-600 shadow-lg" title={t('logout')}>
                                <i className="fa-solid fa-power-off text-white text-xs"></i>
                              </button>
@@ -730,7 +747,7 @@ const App: React.FC = () => {
       </header>
 
       <main className="max-w-[1400px] mx-auto px-4 py-6 md:py-8 pb-20">
-        <WelcomeBanner user={user} data={data} dir={dir} />
+        <WelcomeBanner user={user} data={data} dir={dir} isSuperAdmin={isSuperAdmin} />
 
         {user && activeTab === 'history' ? (
           <Suspense fallback={
@@ -752,7 +769,8 @@ const App: React.FC = () => {
                     history={history} 
                     onDeleteRecord={handleDeleteHistory}
                     onUpdateRecord={handleUpdateRecord}
-                    isAdmin={isAdmin} 
+                    isAdmin={isAdmin}
+                    isSuperAdmin={isSuperAdmin}
                     onOpenUserManagement={() => setShowUserManagement(true)}
                     onOpenAliasManagement={() => setShowAliasManagement(true)}
                     showMessage={showMessage}
@@ -799,14 +817,25 @@ const App: React.FC = () => {
                           <i className="fa-solid fa-calculator"></i> {t('calculator')}
                         </button>
 
-                        {/* --- SUPER ADMIN ONLY SAVE BUTTON --- */}
-                        {user && user.email === ADMIN_EMAIL && (
+                        {/* === التغيير: عرض زر الحفظ فقط للمشرف الرئيسي === */}
+                        {user && isSuperAdmin && (
                             <button onClick={handleArchiveToday} className="whitespace-nowrap btn-amz-primary px-4 h-12 rounded-xl text-sm font-bold flex items-center justify-center gap-2 min-w-[100px]">
                               <i className="fa-solid fa-cloud-arrow-up"></i> {t('save')}
                             </button>
                         )}
                         
-                        
+                        {/* زر خاص للمشرف الرئيسي */}
+                        {user && isSuperAdmin && (
+                            <button 
+                                onClick={() => {
+                                    addToast('info', 'Cief Admin Access - Full System Control');
+                                }} 
+                                className="whitespace-nowrap bg-gradient-to-r from-[#FF9900] to-[#FFD814] text-[#232F3E] px-4 h-12 rounded-xl text-sm font-bold flex items-center justify-center gap-2 min-w-[120px] shadow-lg hover:shadow-xl"
+                                title=" Administrator Privileges"
+                            >
+                              <i className="fa-solid fa-shield"></i>  Admin
+                            </button>
+                        )}
                         
                         <button onClick={copyAllFailed} className="whitespace-nowrap btn-amz-dark px-4 h-12 rounded-xl text-sm font-bold flex items-center justify-center gap-2 min-w-[120px]">
                           <i className="fa-solid fa-copy"></i> {t('copyRto')}
@@ -955,13 +984,14 @@ const App: React.FC = () => {
       )}
 
       {/* User Management Modal */}
-      {showUserManagement && <UserManagement onClose={() => setShowUserManagement(false)} />}
+      {showUserManagement && <UserManagement onClose={() => setShowUserManagement(false)} isSuperAdmin={isSuperAdmin} />}
 
       {/* Alias Management Modal */}
       {showAliasManagement && (
           <AliasManagement 
             onClose={() => setShowAliasManagement(false)} 
             onAliasesUpdated={(newAliases) => setAliases(newAliases)} 
+            isSuperAdmin={isSuperAdmin}
           />
       )}
 

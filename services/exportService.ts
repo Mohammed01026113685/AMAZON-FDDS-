@@ -1,1335 +1,1734 @@
-import { ProcessedResult, HistoryRecord } from '../types';
+import { ProcessedResult, HistoryRecord, TrackingDetail } from '../types';
 import type ExcelJS from 'exceljs';
 
-// --- COLORS PALETTE ---
-const COLORS = {
-    // Primary Colors
-    headerBg: 'FF232F3E',           // Amazon Dark Blue
-    headerText: 'FFFFFFFF',
-    subHeaderBg: 'FFF2F4F8',        // Very Light Gray/Blue
-    subHeaderText: 'FF0F1111',
-    
-    // Data Colors
-    blockSummaryBg: 'FFFFF3CD',     // Soft Yellow for summaries
-    quarter1Bg: 'FFE3F2FD',         // Light Blue for Q1
-    quarter2Bg: 'FFF3E5F5',         // Light Purple for Q2
-    quarter3Bg: 'FFF1F8E9',         // Light Green for Q3
-    quarter4Bg: 'FFFFF3E0',         // Light Orange for Q4
+// --- ENUMs and CONSTANTS ---
+enum ReportType {
+    DAILY = 'daily',
+    MONTHLY = 'monthly',
+    YEARLY = 'yearly',
+    ADVANCED = 'advanced',
+    CUSTOM = 'custom',
+    AGENT_HISTORY = 'agent_history'
+}
+
+enum PerformanceRating {
+    EXCELLENT = 'EXCELLENT',  // >= 95%
+    GOOD = 'GOOD',           // >= 90%
+    AVERAGE = 'AVERAGE',     // >= 80%
+    POOR = 'POOR',           // < 80%
+    NO_DATA = 'NO_DATA'      // No shipments
+}
+
+const COLOR_PALETTE = {
+    // Amazon Theme Colors
+    AMAZON_DARK_BLUE: 'FF232F3E',
+    AMAZON_ORANGE: 'FFFF9900',
+    AMAZON_YELLOW: 'FFFFD814',
+    AMAZON_BLUE: 'FF007185',
+    AMAZON_LIGHT_BLUE: 'FF37475A',
     
     // Status Colors
-    successText: 'FF007600',        // Green
-    warningText: 'FFE99309',        // Orange
-    dangerText: 'FFCC0C39',         // Red
-    infoText: 'FF007185',           // Blue
+    SUCCESS: 'FF10B981',      // Emerald Green
+    WARNING: 'FFF59E0B',      // Amber
+    ERROR: 'FFEF4444',        // Red
+    DANGER: 'FFCC0C39',       // Dark Red
     
     // UI Colors
-    white: 'FFFFFFFF',
-    border: 'FFD5D9D9',
-    zebra: 'FFFAFAFA',             // Almost White
-    totalRowBg: 'FF37475A',        // Lighter Dark Blue for totals
-    totalRowText: 'FFFFFFFF',
-    highlighter: 'FFFFF9C4',       // Yellow highlight for important cells
+    WHITE: 'FFFFFFFF',
+    BLACK: 'FF0F1111',
+    LIGHT_GRAY: 'FFEAEDED',
+    VERY_LIGHT_GRAY: 'FFF8F8F8',
+    MEDIUM_GRAY: 'FFD5D9D9',
+    DARK_GRAY: 'FF6B7280',
     
-    // Period Colors
-    period1: 'FFE8F5E8',           // Light Green
-    period2: 'FFE3F2FD',           // Light Blue
-    period3: 'FFFCE4EC',           // Light Pink
-    period4: 'FFF3E5F5',           // Light Purple
+    // Backgrounds
+    HEADER_BG: 'FF232F3E',
+    SUBHEADER_BG: 'FFEAEDED',
+    SUMMARY_BG: 'FFFFF8E1',     // Light Orange/Yellow
+    ALTERNATE_ROW: 'FFF8F8F8',
+    TOTAL_ROW_BG: 'FF37475A',
+    HIGHLIGHT_BG: 'FFEFF6FF',   // Light Blue
+    
+    // Text Colors
+    TEXT_PRIMARY: 'FF0F1111',
+    TEXT_SECONDARY: 'FF6B7280',
+    TEXT_LIGHT: 'FF9CA3AF',
+    TEXT_WHITE: 'FFFFFFFF'
 };
 
-// --- HELPER FUNCTIONS ---
-const formatNumber = (num: number) => {
-    if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
-    if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
-    return num.toString();
+const BORDER_STYLES = {
+    THIN: {
+        top: { style: 'thin', color: { argb: COLOR_PALETTE.MEDIUM_GRAY } },
+        left: { style: 'thin', color: { argb: COLOR_PALETTE.MEDIUM_GRAY } },
+        bottom: { style: 'thin', color: { argb: COLOR_PALETTE.MEDIUM_GRAY } },
+        right: { style: 'thin', color: { argb: COLOR_PALETTE.MEDIUM_GRAY } }
+    },
+    MEDIUM: {
+        top: { style: 'medium', color: { argb: COLOR_PALETTE.AMAZON_DARK_BLUE } },
+        left: { style: 'medium', color: { argb: COLOR_PALETTE.AMAZON_DARK_BLUE } },
+        bottom: { style: 'medium', color: { argb: COLOR_PALETTE.AMAZON_DARK_BLUE } },
+        right: { style: 'medium', color: { argb: COLOR_PALETTE.AMAZON_DARK_BLUE } }
+    },
+    THICK_ORANGE: {
+        bottom: { style: 'thick', color: { argb: COLOR_PALETTE.AMAZON_ORANGE } }
+    },
+    DOUBLE_WHITE: {
+        top: { style: 'double', color: { argb: COLOR_PALETTE.WHITE } }
+    }
 };
 
-const getRateColor = (rate: number) => {
-    if (rate >= 95) return COLORS.infoText;     // Blue for 95%+
-    if (rate >= 90) return COLORS.successText;  // Green for 90-94%
-    if (rate >= 85) return COLORS.warningText;  // Orange for 85-89%
-    return COLORS.dangerText;                   // Red for <85%
+// --- Helper Functions ---
+const getPerformanceRating = (rate: number): PerformanceRating => {
+    if (rate >= 95) return PerformanceRating.EXCELLENT;
+    if (rate >= 90) return PerformanceRating.GOOD;
+    if (rate >= 80) return PerformanceRating.AVERAGE;
+    if (rate > 0) return PerformanceRating.POOR;
+    return PerformanceRating.NO_DATA;
 };
 
-const getRateStyle = (rate: number, isBold = true) => {
+const getPerformanceColor = (rate: number): string => {
+    switch (getPerformanceRating(rate)) {
+        case PerformanceRating.EXCELLENT: return COLOR_PALETTE.AMAZON_BLUE;
+        case PerformanceRating.GOOD: return COLOR_PALETTE.SUCCESS;
+        case PerformanceRating.AVERAGE: return COLOR_PALETTE.WARNING;
+        case PerformanceRating.POOR: return COLOR_PALETTE.ERROR;
+        default: return COLOR_PALETTE.TEXT_SECONDARY;
+    }
+};
+
+const getPerformanceIcon = (rate: number): string => {
+    switch (getPerformanceRating(rate)) {
+        case PerformanceRating.EXCELLENT: return '★';
+        case PerformanceRating.GOOD: return '✓';
+        case PerformanceRating.AVERAGE: return '⚠';
+        case PerformanceRating.POOR: return '✗';
+        default: return '–';
+    }
+};
+
+const formatPercentage = (value: number): string => {
+    return `${value.toFixed(1)}%`;
+};
+
+const formatNumber = (value: number): string => {
+    return value.toLocaleString('en-US');
+};
+
+// --- Excel Styling Functions ---
+const createBaseStyles = (Excel: typeof ExcelJS) => {
     return {
-        bold: isBold,
-        color: { argb: getRateColor(rate) }
+        // Font Styles
+        headerFont: { 
+            name: 'Calibri', 
+            size: 14, 
+            bold: true, 
+            color: { argb: COLOR_PALETTE.TEXT_WHITE } 
+        },
+        subHeaderFont: { 
+            name: 'Calibri', 
+            size: 11, 
+            bold: true, 
+            color: { argb: COLOR_PALETTE.TEXT_PRIMARY } 
+        },
+        dataFont: { 
+            name: 'Calibri', 
+            size: 10, 
+            color: { argb: COLOR_PALETTE.TEXT_PRIMARY } 
+        },
+        boldFont: { 
+            name: 'Calibri', 
+            size: 11, 
+            bold: true, 
+            color: { argb: COLOR_PALETTE.TEXT_PRIMARY } 
+        },
+        
+        // Alignment Styles
+        centerAlign: { 
+            vertical: 'middle' as const, 
+            horizontal: 'center' as const 
+        },
+        leftAlign: { 
+            vertical: 'middle' as const, 
+            horizontal: 'left' as const,
+            indent: 1 
+        },
+        rightAlign: { 
+            vertical: 'middle' as const, 
+            horizontal: 'right' as const 
+        }
     };
 };
 
-const getPeriodBgColor = (periodIndex: number) => {
-    const colors = [COLORS.period1, COLORS.period2, COLORS.period3, COLORS.period4];
-    return colors[periodIndex % colors.length];
-};
-
-// --- EXCEL STYLES ---
-const getExcelStyles = (Excel: typeof ExcelJS) => ({
-    // Fonts
-    titleFont: { 
-        name: 'Arial', 
-        size: 20, 
-        bold: true, 
-        color: { argb: COLORS.headerText } 
-    },
-    subtitleFont: { 
-        name: 'Arial', 
-        size: 12, 
-        color: { argb: COLORS.headerBg } 
-    },
-    headerFont: { 
-        name: 'Calibri', 
-        size: 12, 
-        bold: true, 
-        color: { argb: COLORS.headerText } 
-    },
-    subHeaderFont: { 
-        name: 'Calibri', 
-        size: 10, 
-        bold: true, 
-        color: { argb: COLORS.subHeaderText } 
-    },
-    dataFont: { 
-        name: 'Calibri', 
-        size: 11, 
-        color: { argb: 'FF0F1111' } 
-    },
-    agentFont: { 
-        name: 'Calibri', 
-        size: 11, 
-        bold: true, 
-        color: { argb: 'FF0F1111' } 
-    },
-    totalFont: {
-        name: 'Calibri',
-        size: 12,
-        bold: true,
-        color: { argb: COLORS.totalRowText }
-    },
-    
-    // Alignments
-    center: { 
-        vertical: 'middle', 
-        horizontal: 'center' 
-    } as Partial<ExcelJS.Alignment>,
-    left: { 
-        vertical: 'middle', 
-        horizontal: 'left', 
-        indent: 1 
-    } as Partial<ExcelJS.Alignment>,
-    right: { 
-        vertical: 'middle', 
-        horizontal: 'right' 
-    } as Partial<ExcelJS.Alignment>,
-    
-    // Borders
-    thinBorder: {
-        top: { style: 'thin', color: { argb: COLORS.border } },
-        left: { style: 'thin', color: { argb: COLORS.border } },
-        bottom: { style: 'thin', color: { argb: COLORS.border } },
-        right: { style: 'thin', color: { argb: COLORS.border } }
-    } as Partial<ExcelJS.Borders>,
-    
-    mediumBorder: {
-        top: { style: 'medium', color: { argb: COLORS.headerBg } },
-        left: { style: 'medium', color: { argb: COLORS.headerBg } },
-        bottom: { style: 'medium', color: { argb: COLORS.headerBg } },
-        right: { style: 'medium', color: { argb: COLORS.headerBg } }
-    } as Partial<ExcelJS.Borders>,
-    
-    // Fills
-    headerFill: { 
-        type: 'pattern' as const, 
-        pattern: 'solid' as const, 
-        fgColor: { argb: COLORS.headerBg } 
-    },
-    subHeaderFill: { 
-        type: 'pattern' as const, 
-        pattern: 'solid' as const, 
-        fgColor: { argb: COLORS.subHeaderBg } 
-    },
-    zebraFill: { 
-        type: 'pattern' as const, 
-        pattern: 'solid' as const, 
-        fgColor: { argb: COLORS.zebra } 
-    },
-    totalFill: { 
-        type: 'pattern' as const, 
-        pattern: 'solid' as const, 
-        fgColor: { argb: COLORS.totalRowBg } 
-    },
-});
-
-// --- HEADER UTILITIES ---
-const applyHeaderStyle = (worksheet: ExcelJS.Worksheet, title: string, subtitle: string) => {
-    // Title Row
+const applyWorksheetHeader = (
+    worksheet: ExcelJS.Worksheet, 
+    title: string, 
+    subtitle: string
+): void => {
+    // Main Title Row
     worksheet.mergeCells('A1:G1');
     const titleCell = worksheet.getCell('A1');
     titleCell.value = title;
-    titleCell.font = { name: 'Arial', size: 20, bold: true, color: { argb: COLORS.white } };
-    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.headerBg } };
-    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    titleCell.font = { 
+        name: 'Arial', 
+        size: 20, 
+        bold: true, 
+        color: { argb: COLOR_PALETTE.WHITE } 
+    };
+    titleCell.fill = { 
+        type: 'pattern', 
+        pattern: 'solid', 
+        fgColor: { argb: COLOR_PALETTE.HEADER_BG } 
+    };
+    titleCell.alignment = { 
+        horizontal: 'center', 
+        vertical: 'middle' 
+    };
     worksheet.getRow(1).height = 40;
 
     // Subtitle Row
     worksheet.mergeCells('A2:G2');
-    const subCell = worksheet.getCell('A2');
-    subCell.value = subtitle;
-    subCell.font = { name: 'Arial', size: 12, color: { argb: COLORS.headerBg } };
-    subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
-    subCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    worksheet.getRow(2).height = 25;
-
-    // Add Logo/Info if needed
-    worksheet.mergeCells('A3:G3');
-    const infoCell = worksheet.getCell('A3');
-    infoCell.value = 'Powered by LogiTrack Analytics System';
-    infoCell.font = { name: 'Arial', size: 9, italic: true, color: { argb: 'FF666666' } };
-    infoCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    worksheet.getRow(3).height = 20;
-};
-
-const addSummaryCard = (worksheet: ExcelJS.Worksheet, startRow: number, total: number, rate: number, delivered?: number, failed?: number) => {
-    // Volume Card
-    worksheet.mergeCells(`A${startRow}:C${startRow + 2}`);
-    const volumeCard = worksheet.getCell(`A${startRow}`);
-    volumeCard.value = `TOTAL VOLUME\n${formatNumber(total)}\n${total.toLocaleString()}`;
-    volumeCard.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-    volumeCard.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FF0F1111' } };
-    volumeCard.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF6FF' } };
-    volumeCard.border = {
-        top: { style: 'medium', color: { argb: 'FF232F3E' } },
-        left: { style: 'medium', color: { argb: 'FF232F3E' } },
-        bottom: { style: 'medium', color: { argb: 'FF232F3E' } },
-        right: { style: 'medium', color: { argb: 'FF232F3E' } }
-    };
-
-    // Rate Card
-    worksheet.mergeCells(`E${startRow}:G${startRow + 2}`);
-    const rateCard = worksheet.getCell(`E${startRow}`);
-    rateCard.value = `SUCCESS RATE\n${rate.toFixed(1)}%\n${rate >= 90 ? 'EXCELLENT' : rate >= 80 ? 'GOOD' : 'NEEDS IMPROVEMENT'}`;
-    rateCard.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-    rateCard.font = { 
+    const subtitleCell = worksheet.getCell('A2');
+    subtitleCell.value = subtitle;
+    subtitleCell.font = { 
         name: 'Arial', 
-        size: 16, 
-        bold: true, 
-        color: { argb: rate >= 90 ? COLORS.successText : rate >= 80 ? COLORS.warningText : COLORS.dangerText } 
+        size: 12, 
+        color: { argb: COLOR_PALETTE.AMAZON_DARK_BLUE } 
     };
-    rateCard.fill = { 
+    subtitleCell.fill = { 
         type: 'pattern', 
         pattern: 'solid', 
-        fgColor: { argb: rate >= 90 ? 'FFECFDF5' : rate >= 80 ? 'FFFFFBEB' : 'FFFEF2F2' } 
+        fgColor: { argb: 'FFF3F4F6' } 
     };
-    rateCard.border = {
-        top: { style: 'medium', color: { argb: 'FF232F3E' } },
-        left: { style: 'medium', color: { argb: 'FF232F3E' } },
-        bottom: { style: 'medium', color: { argb: 'FF232F3E' } },
-        right: { style: 'medium', color: { argb: 'FF232F3E' } }
+    subtitleCell.alignment = { 
+        horizontal: 'center', 
+        vertical: 'middle' 
     };
-
-    // Optional: Add Delivered/Failed card
-    if (delivered !== undefined && failed !== undefined) {
-        worksheet.mergeCells(`C${startRow}:D${startRow + 2}`);
-        const statsCard = worksheet.getCell(`C${startRow}`);
-        statsCard.value = `DELIVERED: ${formatNumber(delivered)}\nFAILED: ${formatNumber(failed)}\nRATIO: ${((delivered / total) * 100).toFixed(1)}%`;
-        statsCard.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-        statsCard.font = { name: 'Arial', size: 11, bold: true };
-        statsCard.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F9FF' } };
-        statsCard.border = {
-            top: { style: 'medium', color: { argb: 'FF232F3E' } },
-            left: { style: 'medium', color: { argb: 'FF232F3E' } },
-            bottom: { style: 'medium', color: { argb: 'FF232F3E' } },
-            right: { style: 'medium', color: { argb: 'FF232F3E' } }
-        };
-    }
+    worksheet.getRow(2).height = 25;
 };
 
-// --- ADVANCED PERFORMANCE REPORT ---
-export const exportAdvancedReport = async (report: any[], title: string, filename: string) => {
-    const ExcelJS = (await import('exceljs')).default;
-    const styles = getExcelStyles(ExcelJS);
-    
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'LogiTrack Analytics';
-    workbook.lastModifiedBy = 'LogiTrack System';
-    workbook.created = new Date();
-    
-    const worksheet = workbook.addWorksheet('Performance Report', {
-        views: [{ state: 'frozen', xSplit: 2, ySplit: 9 }]
-    });
+const applyAutoFilter = (
+    worksheet: ExcelJS.Worksheet, 
+    startRow: number, 
+    columnCount: number
+): void => {
+    worksheet.autoFilter = {
+        from: { row: startRow, column: 1 },
+        to: { row: startRow, column: columnCount }
+    };
+};
 
-    // Header
-    applyHeaderStyle(worksheet, '📊 ADVANCED PERFORMANCE ANALYSIS', title);
-
-    // Calculate Totals
-    const totalVolume = report.reduce((acc: number, curr: any) => acc + curr.total, 0);
-    const totalDelivered = report.reduce((acc: number, curr: any) => acc + curr.delivered, 0);
-    const totalFailed = report.reduce((acc: number, curr: any) => acc + curr.failed, 0);
-    const overallRate = totalVolume > 0 ? (totalDelivered / totalVolume) * 100 : 0;
-
-    // Summary Cards
-    addSummaryCard(worksheet, 5, totalVolume, overallRate, totalDelivered, totalFailed);
-
-    // Table Headers
-    const tableStartRow = 9;
-    const headers = [
-        '🏆 Rank',
-        '👤 Agent Name',
-        '📅 Days Worked',
-        '📦 Total Shipments',
-        '✅ Delivered',
-        '❌ Failed/RTO',
-        '📈 Success Rate %'
-    ];
+const createSummaryCard = (
+    worksheet: ExcelJS.Worksheet,
+    startRow: number,
+    title: string,
+    value: string | number,
+    icon?: string
+): void => {
+    const cardCell = worksheet.getCell(`A${startRow}`);
     
-    const headerRow = worksheet.getRow(tableStartRow);
-    headerRow.values = headers;
-    headerRow.height = 35;
+    if (icon) {
+        cardCell.value = `${icon} ${title}\n${value}`;
+    } else {
+        cardCell.value = `${title}\n${value}`;
+    }
     
-    // Style Headers
-    headerRow.eachCell((cell, colNumber) => {
-        cell.style = {
-            font: styles.headerFont,
-            fill: styles.headerFill,
-            alignment: styles.center,
-            border: styles.thinBorder
+    cardCell.alignment = { 
+        horizontal: 'center', 
+        vertical: 'middle', 
+        wrapText: true 
+    };
+    cardCell.font = { 
+        name: 'Arial', 
+        size: 12, 
+        bold: true 
+    };
+    cardCell.fill = { 
+        type: 'pattern', 
+        pattern: 'solid', 
+        fgColor: { argb: COLOR_PALETTE.HIGHLIGHT_BG } 
+    };
+    cardCell.border = BORDER_STYLES.MEDIUM;
+};
+
+// --- Export Functions ---
+
+/**
+ * Export Daily Report to Excel
+ */
+export const exportToExcel = async (data: ProcessedResult): Promise<void> => {
+    try {
+        const ExcelJS = (await import('exceljs')).default;
+        const styles = createBaseStyles(ExcelJS);
+        
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = 'LogiTrack System';
+        workbook.created = new Date();
+        
+        const worksheet = workbook.addWorksheet('Daily Report', {
+            views: [{ state: 'frozen', xSplit: 0, ySplit: 8 }]
+        });
+
+        const dateStr = new Date().toLocaleDateString('en-GB', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        // 1. Header Section
+        applyWorksheetHeader(
+            worksheet, 
+            'LogiTrack | Daily Performance Report', 
+            `Date: ${dateStr}`
+        );
+
+        // 2. Summary Cards
+        worksheet.mergeCells('A4:C6');
+        createSummaryCard(
+            worksheet,
+            4,
+            'TOTAL VOLUME',
+            formatNumber(data.grandTotal.total),
+            '📦'
+        );
+
+        worksheet.mergeCells('E4:G6');
+        const successRateCell = worksheet.getCell('E4');
+        successRateCell.value = `🎯 SUCCESS RATE\n${formatPercentage(data.grandTotal.successRate)}`;
+        successRateCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        successRateCell.font = { 
+            name: 'Arial', 
+            size: 14, 
+            bold: true, 
+            color: { argb: getPerformanceColor(data.grandTotal.successRate) } 
         };
-        
-        // Add icons to header cells
-        if (colNumber === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF9900' } }; // Orange for Rank
-        if (colNumber === 7) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF007185' } }; // Blue for Rate
-    });
+        successRateCell.fill = { 
+            type: 'pattern', 
+            pattern: 'solid', 
+            fgColor: { argb: 'FFECFDF5' } 
+        };
+        successRateCell.border = BORDER_STYLES.MEDIUM;
 
-    // Data Rows
-    report.forEach((agent, index) => {
-        const rowIndex = tableStartRow + 1 + index;
-        const row = worksheet.getRow(rowIndex);
-        
-        row.values = [
-            index + 1,
-            agent.name,
-            agent.daysWorked,
-            agent.total,
-            agent.delivered,
-            agent.failed,
-            agent.successRate / 100  // Store as decimal for Excel percentage
+        // 3. Table Headers
+        const tableStartRow = 8;
+        const headers = [
+            'Agent Name', 
+            'Delivered', 
+            'Failed', 
+            'OFD', 
+            'RTO', 
+            'Total', 
+            'Success Rate'
         ];
         
-        row.height = 28;
-
-        // Style Cells
-        row.eachCell((cell, colNumber) => {
-            // Basic styling
-            cell.style = {
-                font: colNumber === 2 ? styles.agentFont : styles.dataFont,
-                alignment: colNumber === 2 ? styles.left : styles.center,
-                border: styles.thinBorder,
-                fill: index % 2 !== 0 ? styles.zebraFill : undefined
-            };
-            
-            // Rank styling
-            if (colNumber === 1) {
-                if (index === 0) {
-                    cell.font = { ...styles.headerFont, color: { argb: 'FFFFD814' } }; // Gold for 1st
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF232F3E' } };
-                } else if (index === 1) {
-                    cell.font = { ...styles.headerFont, color: { argb: 'FFC0C0C0' } }; // Silver for 2nd
-                } else if (index === 2) {
-                    cell.font = { ...styles.headerFont, color: { argb: 'FFCD7F32' } }; // Bronze for 3rd
-                }
-            }
-            
-            // Rate percentage formatting
-            if (colNumber === 7) {
-                cell.numFmt = '0.0%';
-                cell.font = getRateStyle(agent.successRate, true);
-                
-                // Add data bars visualization
-                if (agent.successRate > 0) {
-                    const ratePercent = Math.min(agent.successRate / 100, 1);
-                    cell.fill = {
-                        type: 'gradient',
-                        gradient: 'angle',
-                        degree: 0,
-                        stops: [
-                            { position: 0, color: { argb: getRateColor(agent.successRate) + '80' } },
-                            { position: ratePercent, color: { argb: getRateColor(agent.successRate) + '80' } },
-                            { position: ratePercent, color: { argb: 'FFFFFFFF' } },
-                            { position: 1, color: { argb: 'FFFFFFFF' } }
-                        ]
-                    };
-                }
-            }
-            
-            // Highlight high performers
-            if (agent.successRate >= 95 && colNumber <= 6) {
-                cell.font = { ...cell.font, bold: true };
-                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.highlighter } };
-            }
-        });
-    });
-
-    // Column Widths
-    worksheet.columns = [
-        { width: 10 },  // Rank
-        { width: 35 },  // Agent Name
-        { width: 15 },  // Days Worked
-        { width: 20 },  // Total Shipments
-        { width: 15 },  // Delivered
-        { width: 15 },  // Failed/RTO
-        { width: 18 },  // Success Rate
-    ];
-
-    // Add Footer with Statistics
-    const lastRow = tableStartRow + report.length + 2;
-    worksheet.mergeCells(`A${lastRow}:G${lastRow}`);
-    const footerCell = worksheet.getCell(`A${lastRow}`);
-    footerCell.value = `📋 Report Generated: ${new Date().toLocaleString()} | Total Agents: ${report.length} | Average Rate: ${(report.reduce((a, b) => a + b.successRate, 0) / report.length).toFixed(1)}%`;
-    footerCell.font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF666666' } };
-    footerCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    footerCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
-
-    // Auto Filter
-    worksheet.autoFilter = {
-        from: { row: tableStartRow, column: 1 },
-        to: { row: tableStartRow + report.length, column: 7 }
-    };
-
-    // Export
-    const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `${filename.replace(/\s+/g, '_')}.xlsx`;
-    anchor.click();
-};
-
-// --- DAILY REPORT ---
-export const exportToExcel = async (data: ProcessedResult) => {
-    const ExcelJS = (await import('exceljs')).default;
-    const styles = getExcelStyles(ExcelJS);
-    
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Daily Report', {
-        views: [{ state: 'frozen', xSplit: 0, ySplit: 8 }]
-    });
-
-    const dateStr = new Date().toLocaleDateString('en-GB', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-    });
-
-    // Header
-    applyHeaderStyle(worksheet, '📋 DAILY OPERATIONS REPORT', `Date: ${dateStr}`);
-    addSummaryCard(worksheet, 5, data.grandTotal.total, data.grandTotal.successRate, 
-                  data.grandTotal.delivered, data.grandTotal.failed);
-
-    // Table Headers
-    const tableStartRow = 9;
-    const headers = [
-        '👤 Agent Name',
-        '✅ Delivered',
-        '❌ Failed',
-        '🚚 OFD',
-        '↩️ RTO',
-        '📦 Total',
-        '📈 Success Rate %'
-    ];
-    
-    const headerRow = worksheet.getRow(tableStartRow);
-    headerRow.values = headers;
-    headerRow.height = 35;
-    
-    headerRow.eachCell((cell) => {
-        cell.style = {
-            font: styles.headerFont,
-            fill: styles.headerFill,
-            alignment: styles.center,
-            border: styles.thinBorder
-        };
-    });
-
-    // Data Rows
-    data.summaries.forEach((agent, index) => {
-        const row = worksheet.addRow([
-            agent.daName,
-            agent.delivered,
-            agent.failed,
-            agent.ofd,
-            agent.rto,
-            agent.total,
-            agent.successRate / 100
-        ]);
+        const headerRow = worksheet.getRow(tableStartRow);
+        headerRow.values = headers;
+        headerRow.height = 30;
         
-        row.height = 26;
-
-        // Style each cell
-        row.eachCell((cell, colNumber) => {
-            // Basic styling
-            cell.style = {
-                font: colNumber === 1 ? styles.agentFont : styles.dataFont,
-                alignment: colNumber === 1 ? styles.left : styles.center,
-                border: styles.thinBorder,
-                fill: index % 2 !== 0 ? styles.zebraFill : undefined
+        // Apply header styling
+        headerRow.eachCell((cell) => {
+            cell.font = { 
+                bold: true, 
+                color: { argb: COLOR_PALETTE.TEXT_WHITE }, 
+                size: 11,
+                name: 'Calibri'
             };
-
-            // Special formatting
-            if (colNumber === 7) { // Success Rate
-                cell.numFmt = '0.0%';
-                cell.font = getRateStyle(agent.successRate, true);
-                
-                // Add color scale visualization
-                if (agent.successRate > 0) {
-                    const ratePercent = Math.min(agent.successRate / 100, 1);
-                    cell.fill = {
-                        type: 'gradient',
-                        gradient: 'angle',
-                        degree: 0,
-                        stops: [
-                            { position: 0, color: { argb: getRateColor(agent.successRate) } },
-                            { position: ratePercent, color: { argb: getRateColor(agent.successRate) } },
-                            { position: ratePercent, color: { argb: 'FFFFFFFF' } },
-                            { position: 1, color: { argb: 'FFFFFFFF' } }
-                        ]
-                    };
-                }
-            }
-
-            // Highlight issues
-            if (agent.failed > 0 && colNumber === 3) {
-                cell.font = { bold: true, color: { argb: COLORS.dangerText } };
-                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF5F5' } };
-            }
-            
-            if (agent.ofd > 0 && colNumber === 4) {
-                cell.font = { bold: true, color: { argb: 'FF1E40AF' } };
-                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F9FF' } };
-            }
-
-            // Top performers highlight
-            if (agent.successRate >= 95 && colNumber === 1) {
-                cell.font = { ...cell.font, color: { argb: COLORS.infoText } };
-                cell.value = `⭐ ${cell.value}`;
-            }
+            cell.fill = { 
+                type: 'pattern', 
+                pattern: 'solid', 
+                fgColor: { argb: COLOR_PALETTE.HEADER_BG } 
+            };
+            cell.alignment = styles.centerAlign;
+            cell.border = BORDER_STYLES.THICK_ORANGE;
         });
-    });
 
-    // Grand Total Row
-    const totalRow = worksheet.addRow([
-        '🏆 GRAND TOTAL',
-        data.grandTotal.delivered,
-        data.grandTotal.failed,
-        data.grandTotal.ofd,
-        data.grandTotal.rto,
-        data.grandTotal.total,
-        data.grandTotal.successRate / 100
-    ]);
+        // Enable AutoFilter
+        applyAutoFilter(worksheet, tableStartRow, headers.length);
 
-    totalRow.height = 32;
-    totalRow.eachCell((cell, colNumber) => {
-        cell.style = {
-            font: styles.totalFont,
-            fill: styles.totalFill,
-            alignment: colNumber === 1 ? styles.left : styles.center,
-            border: styles.thinBorder
-        };
-        if (colNumber === 7) {
-            cell.numFmt = '0.0%';
-            cell.font = getRateStyle(data.grandTotal.successRate, true);
-        }
-    });
+        // 4. Data Rows
+        data.summaries.forEach((summary, index) => {
+            const rowIndex = tableStartRow + 1 + index;
+            const row = worksheet.getRow(rowIndex);
+            
+            row.values = [
+                summary.daName,
+                summary.delivered,
+                summary.failed,
+                summary.ofd,
+                summary.rto,
+                summary.total,
+                summary.successRate / 100  // Convert to decimal for Excel percentage
+            ];
+            
+            row.height = 22;
 
-    // Column Widths
-    worksheet.columns = [
-        { width: 35 }, // Name
-        { width: 15 }, // Delivered
-        { width: 15 }, // Failed
-        { width: 15 }, // OFD
-        { width: 15 }, // RTO
-        { width: 15 }, // Total
-        { width: 18 }  // Rate
-    ];
+            // Format cells
+            row.getCell(7).numFmt = '0.0%'; // Percentage format
+            
+            // Name cell styling
+            row.getCell(1).alignment = styles.leftAlign;
+            row.getCell(1).font = styles.boldFont;
 
-    // Auto Filter
-    worksheet.autoFilter = {
-        from: { row: tableStartRow, column: 1 },
-        to: { row: tableStartRow + data.summaries.length + 1, column: 7 }
-    };
-
-    // Export
-    const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `LogiTrack_Daily_${new Date().toISOString().split('T')[0]}.xlsx`;
-    anchor.click();
-};
-
-// --- AGENT PASSPORT (Detailed History) ---
-export const exportAgentHistory = async (agentName: string, history: any[]) => {
-    const ExcelJS = (await import('exceljs')).default;
-    const styles = getExcelStyles(ExcelJS);
-    
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Agent Passport', {
-        views: [{ state: 'frozen', xSplit: 0, ySplit: 7 }]
-    });
-
-    // Header
-    worksheet.mergeCells('A1:F1');
-    const headerCell = worksheet.getCell('A1');
-    headerCell.value = `📘 AGENT PASSPORT: ${agentName.toUpperCase()}`;
-    headerCell.style = {
-        font: { ...styles.titleFont, size: 18 },
-        fill: styles.headerFill,
-        alignment: styles.center
-    };
-    worksheet.getRow(1).height = 45;
-
-    // Summary Block
-    const totalVol = history.reduce((a, b) => a + b.total, 0);
-    const totalDel = history.reduce((a, b) => a + b.delivered, 0);
-    const totalFailed = history.reduce((a, b) => a + (b.total - b.delivered), 0);
-    const avgRate = totalVol > 0 ? (totalDel / totalVol) * 100 : 0;
-    const daysWorked = history.length;
-
-    // Volume Box
-    worksheet.mergeCells('A3:C4');
-    const volBox = worksheet.getCell('A3');
-    volBox.value = `TOTAL VOLUME\n${formatNumber(totalVol)}\n${totalVol.toLocaleString()}`;
-    volBox.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-    volBox.font = { bold: true, size: 14 };
-    volBox.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F8FF' } };
-    volBox.border = styles.mediumBorder;
-
-    // Rate Box
-    worksheet.mergeCells('D3:F4');
-    const rateBox = worksheet.getCell('D3');
-    rateBox.value = `OVERALL PERFORMANCE\n${avgRate.toFixed(1)}%\n${daysWorked} days tracked`;
-    rateBox.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-    rateBox.font = { bold: true, size: 16, color: { argb: getRateColor(avgRate) } };
-    rateBox.fill = { 
-        type: 'pattern', 
-        pattern: 'solid', 
-        fgColor: { argb: avgRate >= 90 ? 'FFECFDF5' : avgRate >= 80 ? 'FFFFFBEB' : 'FFFEF2F2' } 
-    };
-    rateBox.border = styles.mediumBorder;
-
-    // Stats Row
-    worksheet.mergeCells('A5:F5');
-    const statsCell = worksheet.getCell('A5');
-    statsCell.value = `📊 Statistics: ${totalDel.toLocaleString()} Delivered • ${totalFailed.toLocaleString()} Failed • ${((totalDel/totalVol)*100).toFixed(1)}% Success Ratio`;
-    statsCell.font = { name: 'Calibri', size: 11, bold: true };
-    statsCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    statsCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
-    worksheet.getRow(5).height = 25;
-
-    // Table Header
-    const tableStart = 7;
-    const headers = ['📅 Date', '📦 Total Orders', '✅ Delivered', '❌ Failed/RTO', '📈 Performance %', '🎯 Trend'];
-    
-    const row = worksheet.getRow(tableStart);
-    row.values = headers;
-    row.height = 30;
-    
-    row.eachCell((cell) => {
-        cell.style = {
-            font: styles.headerFont,
-            fill: styles.headerFill,
-            alignment: styles.center,
-            border: styles.thinBorder
-        };
-    });
-
-    // Data Rows (Sorted by date descending)
-    const sortedHistory = [...history].sort((a, b) => 
-        new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
-
-    let prevRate = 0;
-    
-    sortedHistory.forEach((day, index) => {
-        const row = worksheet.addRow([
-            day.date,
-            day.total,
-            day.delivered,
-            (day.total - day.delivered),
-            day.successRate / 100,
-            '' // Trend column
-        ]);
-        
-        row.height = 24;
-
-        const rate = day.successRate;
-        const trend = rate > prevRate ? '↗️' : rate < prevRate ? '↘️' : '➡️';
-        prevRate = rate;
-
-        row.eachCell((cell, colNumber) => {
-            // Basic styling
-            cell.style = {
-                font: styles.dataFont,
-                alignment: styles.center,
-                border: styles.thinBorder,
-                fill: index % 2 !== 0 ? styles.zebraFill : undefined
+            // Conditional formatting for performance
+            const rateCell = row.getCell(7);
+            rateCell.font = { 
+                bold: true, 
+                color: { argb: getPerformanceColor(summary.successRate) }
             };
 
-            // Special formatting
-            if (colNumber === 1) { // Date
-                cell.alignment = styles.left;
-                if (new Date(day.date).getDay() === 5) { // Friday
-                    cell.font = { ...cell.font, bold: true, color: { argb: 'FF1E40AF' } };
-                }
-            }
-            
-            if (colNumber === 5) { // Performance %
-                cell.numFmt = '0.0%';
-                cell.font = getRateStyle(rate, true);
-                
-                // Add conditional formatting visualization
-                if (rate >= 95) {
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECFDF5' } };
-                } else if (rate < 80) {
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF2F2' } };
-                }
-            }
-            
-            if (colNumber === 6) { // Trend
-                cell.value = trend;
-                cell.font = { size: 14 };
-                if (trend === '↗️') {
-                    cell.font = { ...cell.font, color: { argb: COLORS.successText } };
-                } else if (trend === '↘️') {
-                    cell.font = { ...cell.font, color: { argb: COLORS.dangerText } };
-                }
+            // Highlight high failure rates
+            if (summary.failed > summary.total * 0.2) { // More than 20% failure
+                row.getCell(3).font = { 
+                    bold: true, 
+                    color: { argb: COLOR_PALETTE.ERROR }
+                };
             }
 
-            // Highlight exceptional days
-            if (rate >= 95 && day.total > 50) {
-                row.eachCell((c) => {
-                    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0FDF4' } };
+            // Zebra striping
+            if (index % 2 !== 0) {
+                row.eachCell({ includeEmpty: true }, (cell) => {
+                    cell.fill = { 
+                        type: 'pattern', 
+                        pattern: 'solid', 
+                        fgColor: { argb: COLOR_PALETTE.ALTERNATE_ROW } 
+                    };
                 });
-                row.getCell(1).value = `🏆 ${day.date}`;
             }
+
+            // Apply borders
+            row.eachCell((cell) => {
+                if (cell.col !== 1) {
+                    cell.alignment = styles.centerAlign;
+                }
+                cell.border = { 
+                    bottom: { 
+                        style: 'thin', 
+                        color: { argb: 'FFE2E8F0' } 
+                    } 
+                };
+            });
         });
-    });
 
-    // Add Performance Summary
-    const summaryRow = tableStart + sortedHistory.length + 2;
-    worksheet.mergeCells(`A${summaryRow}:F${summaryRow}`);
-    const summaryCell = worksheet.getCell(`A${summaryRow}`);
-    
-    const bestDay = sortedHistory.reduce((best, curr) => 
-        curr.successRate > best.successRate ? curr : best
-    );
-    const worstDay = sortedHistory.reduce((worst, curr) => 
-        curr.successRate < worst.successRate ? curr : worst
-    );
-    
-    summaryCell.value = `📊 Performance Summary: Best Day ${bestDay.date} (${bestDay.successRate.toFixed(1)}%) • Worst Day ${worstDay.date} (${worstDay.successRate.toFixed(1)}%) • Average: ${avgRate.toFixed(1)}%`;
-    summaryCell.font = { name: 'Calibri', size: 11, italic: true };
-    summaryCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    summaryCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+        // 5. Grand Total Row
+        const totalRowIndex = tableStartRow + data.summaries.length + 1;
+        const totalRow = worksheet.addRow([
+            'GRAND TOTAL',
+            data.grandTotal.delivered,
+            data.grandTotal.failed,
+            data.grandTotal.ofd,
+            data.grandTotal.rto,
+            data.grandTotal.total,
+            data.grandTotal.successRate / 100
+        ]);
 
-    // Column Widths
-    worksheet.columns = [
-        { width: 20 }, // Date
-        { width: 15 }, // Total
-        { width: 15 }, // Delivered
-        { width: 15 }, // Failed
-        { width: 18 }, // Rate
-        { width: 12 }  // Trend
-    ];
+        totalRow.height = 28;
+        
+        totalRow.eachCell((cell) => {
+            cell.fill = { 
+                type: 'pattern', 
+                pattern: 'solid', 
+                fgColor: { argb: COLOR_PALETTE.TOTAL_ROW_BG } 
+            };
+            cell.font = { 
+                bold: true, 
+                color: { argb: COLOR_PALETTE.TEXT_WHITE }, 
+                size: 12,
+                name: 'Calibri'
+            };
+            
+            if (cell.col !== 1) {
+                cell.alignment = styles.centerAlign;
+            } else {
+                cell.alignment = styles.leftAlign;
+            }
+            
+            cell.border = BORDER_STYLES.DOUBLE_WHITE;
+        });
+        
+        totalRow.getCell(7).numFmt = '0.0%';
 
-    // Export
-    const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `${agentName.replace(/\s+/g, '_')}_Passport_${new Date().toISOString().split('T')[0]}.xlsx`;
-    anchor.click();
+        // 6. Column Widths
+        worksheet.columns = [
+            { width: 35 }, // Agent Name
+            { width: 15 }, // Delivered
+            { width: 15 }, // Failed
+            { width: 15 }, // OFD
+            { width: 15 }, // RTO
+            { width: 15 }, // Total
+            { width: 20 }  // Success Rate
+        ];
+
+        // 7. Add some metadata
+        worksheet.getCell('A1').note = `Generated on ${new Date().toLocaleString()}`;
+
+        // 8. Export
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { 
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+        });
+        const url = window.URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `LogiTrack_Daily_Report_${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        window.URL.revokeObjectURL(url);
+
+    } catch (error) {
+        console.error('Export to Excel failed:', error);
+        throw new Error('Failed to export report to Excel');
+    }
 };
 
-// --- SMART COMPLEX MONTHLY REPORT (Main Function) ---
-export const exportComplexMonthlyReport = async (rawRecords: HistoryRecord[], title: string, filename: string) => {
-    const ExcelJS = (await import('exceljs')).default;
-    const styles = getExcelStyles(ExcelJS);
-    
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'LogiTrack Analytics';
-    workbook.lastModifiedBy = 'LogiTrack System';
-    
-    const worksheet = workbook.addWorksheet('Detailed Analysis', {
-        views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }]
-    });
-
-    // --- 1. DETERMINE MODE ---
-    let minTs = Infinity, maxTs = -Infinity;
-    rawRecords.forEach(r => {
-        const t = new Date(r.date).getTime();
-        if (t < minTs) minTs = t;
-        if (t > maxTs) maxTs = t;
-    });
-    
-    const daySpan = (maxTs - minTs) / (1000 * 60 * 60 * 24);
-    const isYearlyMode = daySpan > 35;
-    const SLOT_COUNT = isYearlyMode ? 12 : 31;
-
-    // Title
-    worksheet.mergeCells('A1:Z1');
-    const titleCell = worksheet.getCell('A1');
-    titleCell.value = isYearlyMode 
-        ? `📅 YEARLY PERFORMANCE MATRIX - ${title}`
-        : `📊 MONTHLY PERFORMANCE DASHBOARD - ${title}`;
-    titleCell.style = {
-        font: styles.titleFont,
-        fill: styles.headerFill,
-        alignment: styles.center
-    };
-    worksheet.getRow(1).height = 45;
-
-    // Subtitle
-    worksheet.mergeCells('A2:Z2');
-    const subtitleCell = worksheet.getCell('A2');
-    const startDate = new Date(minTs).toLocaleDateString();
-    const endDate = new Date(maxTs).toLocaleDateString();
-    subtitleCell.value = isYearlyMode
-        ? `📆 Period: ${startDate} to ${endDate} • ${rawRecords.length} days analyzed • ${daySpan.toFixed(0)}-day span`
-        : `📆 Month Analysis • ${rawRecords.length} days tracked • ${new Date(minTs).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
-    subtitleCell.style = {
-        font: { ...styles.subtitleFont, size: 11 },
-        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } },
-        alignment: styles.center
-    };
-    worksheet.getRow(2).height = 28;
-
-    // --- 2. PREPARE DATA ---
-    const agentMap: Record<string, { total: number, delivered: number }[]> = {};
-    const agentNames = new Set<string>();
-    const slotTotals = new Array(SLOT_COUNT).fill(null).map(() => ({ total: 0, delivered: 0 }));
-
-    // Collect agent names
-    rawRecords.forEach(rec => {
-        if (!rec.agents) return;
-        rec.agents.forEach(a => agentNames.add(a.daName));
-    });
-
-    const sortedAgents = Array.from(agentNames).sort();
-
-    // Initialize data structures
-    sortedAgents.forEach(name => {
-        agentMap[name] = new Array(SLOT_COUNT).fill(null).map(() => ({ total: 0, delivered: 0 }));
-    });
-
-    // Fill data
-    rawRecords.forEach(rec => {
-        const date = new Date(rec.date);
-        let slotIndex = isYearlyMode ? date.getMonth() : date.getDate() - 1;
+/**
+ * Export Advanced Performance Report
+ */
+export const exportAdvancedReport = async (
+    report: any[], 
+    title: string, 
+    filename: string
+): Promise<void> => {
+    try {
+        const ExcelJS = (await import('exceljs')).default;
         
-        if (slotIndex < 0 || slotIndex >= SLOT_COUNT) return;
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = 'LogiTrack System';
+        
+        const worksheet = workbook.addWorksheet('Performance Report');
 
-        if (rec.agents) {
-            rec.agents.forEach(a => {
-                if (agentMap[a.daName]) {
-                    agentMap[a.daName][slotIndex].total += a.total;
-                    agentMap[a.daName][slotIndex].delivered += a.delivered;
-                    
-                    slotTotals[slotIndex].total += a.total;
-                    slotTotals[slotIndex].delivered += a.delivered;
+        // Calculate totals
+        const totalVolume = report.reduce((acc, curr) => acc + curr.total, 0);
+        const totalDelivered = report.reduce((acc, curr) => acc + curr.delivered, 0);
+        const overallRate = totalVolume > 0 ? (totalDelivered / totalVolume) * 100 : 0;
+
+        // Apply header
+        applyWorksheetHeader(worksheet, 'LogiTrack | Performance Report', title);
+
+        // Add summary cards
+        worksheet.mergeCells('A4:C6');
+        createSummaryCard(worksheet, 4, 'TOTAL VOLUME', formatNumber(totalVolume), '📊');
+
+        worksheet.mergeCells('E4:G6');
+        const rateCard = worksheet.getCell('E4');
+        rateCard.value = `🎯 OVERALL SUCCESS RATE\n${formatPercentage(overallRate)}`;
+        rateCard.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        rateCard.font = { 
+            name: 'Arial', 
+            size: 14, 
+            bold: true, 
+            color: { argb: getPerformanceColor(overallRate) } 
+        };
+        rateCard.fill = { 
+            type: 'pattern', 
+            pattern: 'solid', 
+            fgColor: { argb: 'FFECFDF5' } 
+        };
+        rateCard.border = BORDER_STYLES.MEDIUM;
+
+        // Table setup
+        const tableStartRow = 8;
+        const headers = [
+            'Rank', 
+            'Agent Name', 
+            'Days Worked', 
+            'Total Shipments', 
+            'Delivered', 
+            'Failed/RTO', 
+            'Success Rate'
+        ];
+        
+        const headerRow = worksheet.getRow(tableStartRow);
+        headerRow.values = headers;
+        headerRow.height = 30;
+        
+        // Style headers
+        headerRow.eachCell((cell) => {
+            cell.font = { 
+                bold: true, 
+                color: { argb: COLOR_PALETTE.TEXT_WHITE }, 
+                size: 11 
+            };
+            cell.fill = { 
+                type: 'pattern', 
+                pattern: 'solid', 
+                fgColor: { argb: COLOR_PALETTE.AMAZON_LIGHT_BLUE } 
+            };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            cell.border = BORDER_STYLES.THICK_ORANGE;
+        });
+
+        // Data rows
+        report.forEach((agent, index) => {
+            const rowIndex = tableStartRow + 1 + index;
+            const row = worksheet.getRow(rowIndex);
+            
+            row.values = [
+                index + 1,
+                agent.name,
+                agent.daysWorked,
+                agent.total,
+                agent.delivered,
+                agent.failed,
+                agent.successRate / 100
+            ];
+
+            // Rank styling
+            row.getCell(1).font = { 
+                bold: true, 
+                color: { argb: COLOR_PALETTE.TEXT_SECONDARY } 
+            };
+            
+            // Agent name styling
+            row.getCell(2).font = { bold: true };
+            row.getCell(2).alignment = { horizontal: 'left', indent: 1 };
+            
+            // Format percentage
+            row.getCell(7).numFmt = '0.0%';
+            row.getCell(7).font = { bold: true };
+            
+            // Color code success rate
+            const rateColor = getPerformanceColor(agent.successRate);
+            row.getCell(7).font.color = { argb: rateColor };
+
+            // Zebra striping
+            if (index % 2 !== 0) {
+                row.eachCell({ includeEmpty: true }, (cell) => {
+                    cell.fill = { 
+                        type: 'pattern', 
+                        pattern: 'solid', 
+                        fgColor: { argb: COLOR_PALETTE.ALTERNATE_ROW } 
+                    };
+                });
+            }
+
+            row.height = 25;
+            
+            // Apply borders
+            row.eachCell({ includeEmpty: true }, (cell) => {
+                cell.border = { 
+                    bottom: { 
+                        style: 'thin', 
+                        color: { argb: 'FFE2E8F0' } 
+                    } 
+                };
+                if (cell.col !== 2) {
+                    cell.alignment = { horizontal: 'center', vertical: 'middle' };
                 }
             });
-        }
-    });
-
-    // --- 3. BUILD HEADER MATRIX ---
-    worksheet.getColumn(1).width = 35; // Name column
-    
-    let colIndex = 2;
-    const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-    const quarters = ['Q1', 'Q2', 'Q3', 'Q4'];
-
-    const createHeaderBlock = (startSlot: number, endSlot: number, blockLabel: string, periodIndex: number) => {
-        const blockCols = (endSlot - startSlot + 1) * 2; // 2 columns per slot (Vol, %)
-        const blockStartCol = colIndex;
-        const blockEndCol = colIndex + blockCols - 1;
-
-        // Block Header
-        worksheet.mergeCells(3, blockStartCol, 3, blockEndCol);
-        const blockHeader = worksheet.getCell(3, blockStartCol);
-        blockHeader.value = blockLabel;
-        blockHeader.style = {
-            font: { ...styles.headerFont, size: 11 },
-            fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: getPeriodBgColor(periodIndex) } },
-            alignment: styles.center,
-            border: styles.thinBorder
-        };
-
-        // Slot Headers
-        for (let slot = startSlot; slot <= endSlot; slot++) {
-            const slotStartCol = colIndex;
-            
-            // Slot Header (Month/Day)
-            worksheet.mergeCells(4, slotStartCol, 4, slotStartCol + 1);
-            const slotHeader = worksheet.getCell(4, slotStartCol);
-            slotHeader.value = isYearlyMode ? months[slot] : (slot + 1).toString();
-            slotHeader.style = {
-                font: styles.subHeaderFont,
-                fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.subHeaderBg } },
-                alignment: styles.center,
-                border: styles.thinBorder
-            };
-
-            // Metric Labels
-            const volLabel = worksheet.getCell(5, slotStartCol);
-            volLabel.value = '📦';
-            volLabel.style = {
-                font: { size: 10, bold: true },
-                alignment: styles.center,
-                border: styles.thinBorder
-            };
-            worksheet.getColumn(slotStartCol).width = 8;
-
-            const rateLabel = worksheet.getCell(5, slotStartCol + 1);
-            rateLabel.value = '%';
-            rateLabel.style = {
-                font: { size: 10, bold: true, color: { argb: 'FF007185' } },
-                alignment: styles.center,
-                border: styles.thinBorder
-            };
-            worksheet.getColumn(slotStartCol + 1).width = 8;
-
-            colIndex += 2;
-        }
-
-        // Block Summary Section
-        const summaryStartCol = colIndex;
-        const summaryEndCol = colIndex + 2;
-        
-        // Summary Header
-        worksheet.mergeCells(3, summaryStartCol, 3, summaryEndCol);
-        const summaryHeader = worksheet.getCell(3, summaryStartCol);
-        summaryHeader.value = `${blockLabel} TOTAL`;
-        summaryHeader.style = {
-            font: { ...styles.headerFont, color: { argb: 'FF000000' } },
-            fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFD814' } },
-            alignment: styles.center,
-            border: styles.thinBorder
-        };
-
-        // Summary Labels
-        const summaryLabels = ['TOTAL', 'DEL', 'RATE'];
-        summaryLabels.forEach((label, i) => {
-            worksheet.mergeCells(4, colIndex + i, 5, colIndex + i);
-            const labelCell = worksheet.getCell(4, colIndex + i);
-            labelCell.value = label;
-            labelCell.style = {
-                font: styles.subHeaderFont,
-                fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.blockSummaryBg } },
-                alignment: styles.center,
-                border: styles.thinBorder
-            };
-            worksheet.getColumn(colIndex + i).width = 10;
         });
 
-        colIndex += 3;
-    };
+        // Column widths
+        worksheet.columns = [
+            { width: 8 },   // Rank
+            { width: 35 },  // Agent Name
+            { width: 15 },  // Days Worked
+            { width: 20 },  // Total Shipments
+            { width: 15 },  // Delivered
+            { width: 15 },  // Failed/RTO
+            { width: 20 }   // Success Rate
+        ];
 
-    // Create header blocks based on mode
-    if (isYearlyMode) {
-        // Quarterly blocks for yearly view
-        createHeaderBlock(0, 2, 'Q1 (JAN-MAR)', 0);
-        createHeaderBlock(3, 5, 'Q2 (APR-JUN)', 1);
-        createHeaderBlock(6, 8, 'Q3 (JUL-SEP)', 2);
-        createHeaderBlock(9, 11, 'Q4 (OCT-DEC)', 3);
-    } else {
-        // 10-day blocks for monthly view
-        createHeaderBlock(0, 9, 'PERIOD 1 (1-10)', 0);
-        createHeaderBlock(10, 19, 'PERIOD 2 (11-20)', 1);
-        createHeaderBlock(20, 30, 'PERIOD 3 (21-31)', 2);
+        // Export
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { 
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+        });
+        const url = window.URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `${filename}.xlsx`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        window.URL.revokeObjectURL(url);
+
+    } catch (error) {
+        console.error('Export Advanced Report failed:', error);
+        throw new Error('Failed to export advanced report');
     }
+};
 
-    // Grand Total Column
-    const grandTotalCol = colIndex;
-    worksheet.mergeCells(3, grandTotalCol, 3, grandTotalCol + 2);
-    const grandHeader = worksheet.getCell(3, grandTotalCol);
-    grandHeader.value = '🎯 GRAND TOTAL';
-    grandHeader.style = {
-        font: { ...styles.headerFont, size: 12 },
-        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.headerBg } },
-        alignment: styles.center,
-        border: styles.thinBorder
-    };
-
-    const grandLabels = ['TOTAL', 'DELIVERED', 'RATE %'];
-    grandLabels.forEach((label, i) => {
-        worksheet.mergeCells(4, grandTotalCol + i, 5, grandTotalCol + i);
-        const labelCell = worksheet.getCell(4, grandTotalCol + i);
-        labelCell.value = label;
-        labelCell.style = {
-            font: { ...styles.subHeaderFont, color: { argb: COLORS.white } },
-            fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF37475A' } },
-            alignment: styles.center,
-            border: styles.thinBorder
-        };
-        worksheet.getColumn(grandTotalCol + i).width = 14;
-    });
-
-    // --- 4. FILL DATA ROWS ---
-    let currentRow = 6;
-
-    const fillAgentRow = (agentName: string, isGrandTotal = false) => {
-        const row = worksheet.getRow(currentRow);
-        row.height = 24;
+/**
+ * Export Agent History Report
+ */
+export const exportAgentHistory = async (
+    agentName: string, 
+    history: any[]
+): Promise<void> => {
+    try {
+        const ExcelJS = (await import('exceljs')).default;
         
-        // Agent Name Cell
-        const nameCell = row.getCell(1);
-        nameCell.value = isGrandTotal ? '🏆 GRAND TOTAL' : agentName;
-        nameCell.style = {
-            font: isGrandTotal 
-                ? { ...styles.totalFont, size: 13 } 
-                : styles.agentFont,
-            alignment: styles.left,
-            border: styles.thinBorder,
-            fill: isGrandTotal 
-                ? styles.totalFill 
-                : currentRow % 2 !== 0 
-                    ? undefined 
-                    : styles.zebraFill
-        };
-
-        let dataColIndex = 2;
-        let grandBlockStartCol = 0;
-
-        const processBlock = (startSlot: number, endSlot: number, blockBgColor: string) => {
-            let blockTotal = 0;
-            let blockDelivered = 0;
-            let blockColIndex = dataColIndex;
-
-            // Process each slot in the block
-            for (let slot = startSlot; slot <= endSlot; slot++) {
-                let slotTotal = 0, slotDelivered = 0;
-                
-                if (isGrandTotal) {
-                    slotTotal = slotTotals[slot]?.total || 0;
-                    slotDelivered = slotTotals[slot]?.delivered || 0;
-                } else {
-                    const data = agentMap[agentName][slot];
-                    if (data) {
-                        slotTotal = data.total;
-                        slotDelivered = data.delivered;
-                    }
-                }
-
-                // Volume cell
-                const volCell = row.getCell(blockColIndex);
-                volCell.value = slotTotal > 0 ? slotTotal : '';
-                volCell.style = {
-                    font: styles.dataFont,
-                    alignment: styles.center,
-                    border: styles.thinBorder,
-                    fill: slotTotal === 0 
-                        ? { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFAFA' } }
-                        : undefined
-                };
-
-                // Rate cell
-                const rateCell = row.getCell(blockColIndex + 1);
-                const slotRate = slotTotal > 0 ? (slotDelivered / slotTotal) : 0;
-                rateCell.value = slotTotal > 0 ? slotRate : '';
-                rateCell.numFmt = '0%';
-                
-                const rateStyle: any = {
-                    font: slotTotal > 0 ? getRateStyle(slotRate * 100, true) : styles.dataFont,
-                    alignment: styles.center,
-                    border: styles.thinBorder,
-                    fill: slotTotal === 0 
-                        ? { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFAFA' } }
-                        : undefined
-                };
-                
-                // Add color to rate cell
-                if (slotTotal > 0) {
-                    if (slotRate >= 0.95) {
-                        rateStyle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECFDF5' } };
-                    } else if (slotRate < 0.80) {
-                        rateStyle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF2F2' } };
-                    }
-                }
-                
-                rateCell.style = rateStyle;
-
-                blockTotal += slotTotal;
-                blockDelivered += slotDelivered;
-                blockColIndex += 2;
-            }
-
-            // Block Summary Cells
-            const blockRate = blockTotal > 0 ? blockDelivered / blockTotal : 0;
-            
-            const totalCell = row.getCell(blockColIndex);
-            totalCell.value = blockTotal;
-            totalCell.style = {
-                font: { ...styles.dataFont, bold: true },
-                alignment: styles.center,
-                border: styles.thinBorder,
-                fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: blockBgColor } }
-            };
-
-            const delCell = row.getCell(blockColIndex + 1);
-            delCell.value = blockDelivered;
-            delCell.style = {
-                font: { ...styles.dataFont, bold: true },
-                alignment: styles.center,
-                border: styles.thinBorder,
-                fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: blockBgColor } }
-            };
-
-            const rateCell = row.getCell(blockColIndex + 2);
-            rateCell.value = blockRate;
-            rateCell.numFmt = '0.0%';
-            rateCell.style = {
-                font: { ...styles.dataFont, bold: true, color: { argb: getRateColor(blockRate * 100) } },
-                alignment: styles.center,
-                border: styles.thinBorder,
-                fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: blockBgColor } }
-            };
-
-            dataColIndex = blockColIndex + 3;
-            return { total: blockTotal, delivered: blockDelivered };
-        };
-
-        // Process blocks based on mode
-        let totalTotal = 0;
-        let totalDelivered = 0;
-
-        if (isYearlyMode) {
-            const q1 = processBlock(0, 2, COLORS.quarter1Bg);
-            const q2 = processBlock(3, 5, COLORS.quarter2Bg);
-            const q3 = processBlock(6, 8, COLORS.quarter3Bg);
-            const q4 = processBlock(9, 11, COLORS.quarter4Bg);
-            
-            totalTotal = q1.total + q2.total + q3.total + q4.total;
-            totalDelivered = q1.delivered + q2.delivered + q3.delivered + q4.delivered;
-        } else {
-            const p1 = processBlock(0, 9, COLORS.period1);
-            const p2 = processBlock(10, 19, COLORS.period2);
-            const p3 = processBlock(20, 30, COLORS.period3);
-            
-            totalTotal = p1.total + p2.total + p3.total;
-            totalDelivered = p1.delivered + p2.delivered + p3.delivered;
-        }
-
-        // Grand Total Cells
-        const grandRate = totalTotal > 0 ? totalDelivered / totalTotal : 0;
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = 'LogiTrack System';
         
-        const grandTotalCell = row.getCell(dataColIndex);
-        grandTotalCell.value = totalTotal;
-        grandTotalCell.style = {
-            font: { ...styles.dataFont, bold: true, size: 12 },
-            alignment: styles.center,
-            border: { ...styles.thinBorder, left: { style: 'medium', color: { argb: COLORS.headerBg } } },
-            fill: isGrandTotal 
-                ? { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.headerBg } }
-                : { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEAEDED' } }
-        };
+        const worksheet = workbook.addWorksheet('Agent History');
 
-        const grandDeliveredCell = row.getCell(dataColIndex + 1);
-        grandDeliveredCell.value = totalDelivered;
-        grandDeliveredCell.style = {
-            font: { ...styles.dataFont, bold: true, size: 12 },
-            alignment: styles.center,
-            border: styles.thinBorder,
-            fill: isGrandTotal 
-                ? { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.headerBg } }
-                : { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEAEDED' } }
-        };
+        // Apply header
+        applyWorksheetHeader(
+            worksheet, 
+            `Agent Performance History: ${agentName}`, 
+            'Daily Performance Log'
+        );
 
-        const grandRateCell = row.getCell(dataColIndex + 2);
-        grandRateCell.value = grandRate;
-        grandRateCell.numFmt = '0.0%';
-        grandRateCell.style = {
-            font: { 
-                ...styles.dataFont, 
+        // Add agent summary
+        const totalDelivered = history.reduce((sum, day) => sum + day.delivered, 0);
+        const totalShipments = history.reduce((sum, day) => sum + day.total, 0);
+        const overallRate = totalShipments > 0 ? (totalDelivered / totalShipments) * 100 : 0;
+
+        worksheet.mergeCells('A4:C6');
+        createSummaryCard(
+            worksheet, 
+            4, 
+            'TOTAL SHIPMENTS', 
+            formatNumber(totalShipments), 
+            '📦'
+        );
+
+        worksheet.mergeCells('E4:G6');
+        const summaryCell = worksheet.getCell('E4');
+        summaryCell.value = `📊 OVERALL PERFORMANCE\n${formatPercentage(overallRate)}`;
+        summaryCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        summaryCell.font = { 
+            name: 'Arial', 
+            size: 14, 
+            bold: true, 
+            color: { argb: getPerformanceColor(overallRate) } 
+        };
+        summaryCell.fill = { 
+            type: 'pattern', 
+            pattern: 'solid', 
+            fgColor: { argb: 'FFECFDF5' } 
+        };
+        summaryCell.border = BORDER_STYLES.MEDIUM;
+
+        // Table headers
+        const tableStartRow = 8;
+        const headers = ['Date', 'Day', 'Success Rate', 'Delivered', 'Total', 'Failed'];
+        
+        const headerRow = worksheet.getRow(tableStartRow);
+        headerRow.values = headers;
+        headerRow.height = 30;
+        
+        headerRow.eachCell((cell) => {
+            cell.font = { 
                 bold: true, 
-                size: 12, 
-                color: { argb: isGrandTotal ? COLORS.white : getRateColor(grandRate * 100) } 
-            },
-            alignment: styles.center,
-            border: styles.thinBorder,
-            fill: isGrandTotal 
-                ? { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.headerBg } }
-                : { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEAEDED' } }
-        };
+                color: { argb: COLOR_PALETTE.TEXT_WHITE }, 
+                size: 11 
+            };
+            cell.fill = { 
+                type: 'pattern', 
+                pattern: 'solid', 
+                fgColor: { argb: COLOR_PALETTE.HEADER_BG } 
+            };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            cell.border = BORDER_STYLES.THICK_ORANGE;
+        });
 
-        currentRow++;
-    };
+        // Data rows
+        history.forEach((day, index) => {
+            const rowIndex = tableStartRow + 1 + index;
+            const row = worksheet.getRow(rowIndex);
+            
+            const date = new Date(day.date);
+            const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
+            const failed = day.total - day.delivered;
+            
+            row.values = [
+                day.date,
+                dayName,
+                day.successRate / 100,
+                day.delivered,
+                day.total,
+                failed
+            ];
 
-    // Fill agent rows
-    sortedAgents.forEach(agent => fillAgentRow(agent));
-    
-    // Add separator row
-    const separatorRow = worksheet.getRow(currentRow);
-    separatorRow.height = 5;
-    for (let i = 1; i <= grandTotalCol + 2; i++) {
-        separatorRow.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
-    }
-    currentRow++;
+            // Format date
+            row.getCell(1).numFmt = 'yyyy-mm-dd';
+            
+            // Format percentage
+            row.getCell(3).numFmt = '0.0%';
+            
+            // Color code performance
+            const rateColor = getPerformanceColor(day.successRate);
+            row.getCell(3).font = { 
+                bold: true, 
+                color: { argb: rateColor } 
+            };
 
-    // Fill grand total row
-    fillAgentRow('', true);
-
-    // --- 5. ADD SUMMARY STATISTICS ---
-    const summaryRow = currentRow + 2;
-    worksheet.mergeCells(`A${summaryRow}:Z${summaryRow}`);
-    const summaryCell = worksheet.getCell(`A${summaryRow}`);
-    
-    const allVolumes = sortedAgents.map(name => 
-        agentMap[name].reduce((sum, slot) => sum + slot.total, 0)
-    );
-    const avgVolume = allVolumes.reduce((a, b) => a + b, 0) / allVolumes.length;
-    const maxVolume = Math.max(...allVolumes);
-    const topAgent = sortedAgents.find(name => 
-        agentMap[name].reduce((sum, slot) => sum + slot.total, 0) === maxVolume
-    );
-    
-    summaryCell.value = `📊 Summary: ${sortedAgents.length} Agents • Average Volume: ${formatNumber(avgVolume)} • Top Performer: ${topAgent} (${formatNumber(maxVolume)}) • Period: ${startDate} to ${endDate}`;
-    summaryCell.font = { name: 'Calibri', size: 10, italic: true, color: { argb: 'FF666666' } };
-    summaryCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    summaryCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
-
-    // --- 6. EXPORT ---
-    const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `${filename.replace(/\s+/g, '_')}_${isYearlyMode ? 'Yearly' : 'Monthly'}_Matrix.xlsx`;
-    anchor.click();
-};
-
-// --- HELPER EXPORT FUNCTIONS ---
-export const exportMonthlyReport = async (report: any[], month: string) => {
-    return exportAdvancedReport(report, `📅 Monthly Report - ${month}`, `Monthly_${month}`);
-};
-
-export const exportYearlyReport = async (report: any[], year: string) => {
-    return exportAdvancedReport(report, `📊 Annual Report - ${year}`, `Yearly_Report_${year}`);
-};
-
-// --- IMAGE EXPORT ---
-export const exportAsImage = async (elementId: string) => {
-    const html2canvas = (await import('html2canvas')).default;
-    const element = document.getElementById(elementId);
-    if (!element) return;
-    
-    const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        logging: false,
-        windowWidth: element.scrollWidth,
-        windowHeight: element.scrollHeight
-    });
-    
-    const image = canvas.toDataURL("image/png", 1.0);
-    const link = document.createElement('a');
-    link.href = image;
-    link.download = `LogiTrack_Capture_${new Date().toISOString().split('T')[0]}.png`;
-    link.click();
-};
-
-// --- PDF EXPORT ---
-export const exportToPDF = async (data: ProcessedResult, date: string) => {
-    const { jsPDF } = await import('jspdf');    
-    const doc = new jsPDF('landscape');
-    
-    // Title
-    doc.setFontSize(24);
-    doc.setTextColor(35, 47, 62); // Amazon Dark Blue
-    doc.text('LogiTrack Analytics Report', 14, 22);
-    
-    doc.setFontSize(12);
-    doc.setTextColor(100);
-    doc.text(`Date: ${date}`, 14, 32);
-    doc.text(`Report Generated: ${new Date().toLocaleString()}`, 14, 38);
-    
-    // Summary
-    doc.setFontSize(14);
-    doc.setTextColor(0, 118, 0); // Green
-    doc.text(`Total Volume: ${data.grandTotal.total.toLocaleString()}`, 14, 50);
-    doc.text(`Success Rate: ${data.grandTotal.successRate.toFixed(1)}%`, 14, 58);
-    
-    // Table
-    const tableColumn = ["Agent", "Delivered", "Failed", "OFD", "RTO", "Total", "Rate %"];
-    const tableRows: any[] = [];
-
-    data.summaries.forEach(agent => {
-        const rateColor = getRateColor(agent.successRate);
-        const rowStyle = {
-            fillColor: agent.successRate >= 95 ? [236, 253, 245] : // Light Green
-                       agent.successRate < 80 ? [254, 242, 242] : // Light Red
-                       [255, 251, 235] // Light Yellow
-        };
-        
-        tableRows.push([
-            { content: agent.daName, styles: { fontStyle: 'bold' } },
-            agent.delivered,
-            { content: agent.failed, styles: { textColor: agent.failed > 0 ? [204, 12, 57] : [0, 0, 0] } },
-            agent.ofd,
-            agent.rto,
-            agent.total,
-            { content: `${agent.successRate.toFixed(1)}%`, styles: { textColor: rateColor, fontStyle: 'bold' } }
-        ]);
-    });
-    
-    // Grand Total Row
-    tableRows.push([
-        { content: "GRAND TOTAL", styles: { fontStyle: 'bold', textColor: [255, 255, 255] } },
-        { content: data.grandTotal.delivered, styles: { fontStyle: 'bold', textColor: [255, 255, 255] } },
-        { content: data.grandTotal.failed, styles: { fontStyle: 'bold', textColor: [255, 255, 255] } },
-        { content: data.grandTotal.ofd, styles: { fontStyle: 'bold', textColor: [255, 255, 255] } },
-        { content: data.grandTotal.rto, styles: { fontStyle: 'bold', textColor: [255, 255, 255] } },
-        { content: data.grandTotal.total, styles: { fontStyle: 'bold', textColor: [255, 255, 255] } },
-        { content: `${data.grandTotal.successRate.toFixed(1)}%`, styles: { fontStyle: 'bold', textColor: [255, 255, 255] } }
-    ]);
-
-    autoTable(doc, {
-        head: [tableColumn],
-        body: tableRows,
-        startY: 65,
-        theme: 'grid',
-        headStyles: { 
-            fillColor: [35, 47, 62], // Amazon Dark Blue
-            textColor: [255, 255, 255],
-            fontSize: 11,
-            fontStyle: 'bold'
-        },
-        bodyStyles: { fontSize: 10 },
-        alternateRowStyles: { fillColor: [250, 250, 250] },
-        columnStyles: {
-            0: { cellWidth: 40 },
-            6: { halign: 'center' }
-        },
-        willDrawCell: (data: any) => {
-            if (data.section === 'body' && data.row.index === tableRows.length - 1) {
-                data.cell.styles.fillColor = [55, 71, 90]; // Lighter Dark Blue for total row
+            // Highlight high failure days
+            if (failed > 0 && (failed / day.total) > 0.2) {
+                row.getCell(6).font = { 
+                    bold: true, 
+                    color: { argb: COLOR_PALETTE.ERROR } 
+                };
             }
-        }
-    });
 
-    // Footer
-    const pageCount = (doc as any).internal.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor(150);
-        doc.text(`Page ${i} of ${pageCount}`, doc.internal.pageSize.width - 30, doc.internal.pageSize.height - 10);
-        doc.text('LogiTrack Analytics System', 14, doc.internal.pageSize.height - 10);
+            // Zebra striping
+            if (index % 2 !== 0) {
+                row.eachCell({ includeEmpty: true }, (cell) => {
+                    cell.fill = { 
+                        type: 'pattern', 
+                        pattern: 'solid', 
+                        fgColor: { argb: COLOR_PALETTE.ALTERNATE_ROW } 
+                    };
+                });
+            }
+
+            row.height = 22;
+            
+            // Apply borders
+            row.eachCell((cell) => {
+                cell.border = { 
+                    bottom: { 
+                        style: 'thin', 
+                        color: { argb: 'FFE2E8F0' } 
+                    } 
+                };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            });
+        });
+
+        // Add trend analysis
+        const analysisRow = tableStartRow + history.length + 2;
+        worksheet.getCell(`A${analysisRow}`).value = 'Performance Trend Analysis:';
+        worksheet.getCell(`A${analysisRow}`).font = { bold: true, size: 12 };
+        
+        const bestDay = history.reduce((best, current) => 
+            current.successRate > best.successRate ? current : best
+        );
+        
+        const worstDay = history.reduce((worst, current) => 
+            current.successRate < worst.successRate ? current : worst
+        );
+
+        worksheet.getCell(`A${analysisRow + 1}`).value = `Best Day: ${bestDay.date} (${formatPercentage(bestDay.successRate)})`;
+        worksheet.getCell(`A${analysisRow + 2}`).value = `Worst Day: ${worstDay.date} (${formatPercentage(worstDay.successRate)})`;
+        worksheet.getCell(`A${analysisRow + 3}`).value = `Average Daily Rate: ${formatPercentage(overallRate)}`;
+
+        // Column widths
+        worksheet.columns = [
+            { width: 15 }, // Date
+            { width: 10 }, // Day
+            { width: 15 }, // Success Rate
+            { width: 12 }, // Delivered
+            { width: 12 }, // Total
+            { width: 12 }  // Failed
+        ];
+
+        // Export
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { 
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+        });
+        const url = window.URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `${agentName.replace(/[^a-z0-9]/gi, '_')}_Performance_History.xlsx`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        window.URL.revokeObjectURL(url);
+
+    } catch (error) {
+        console.error('Export Agent History failed:', error);
+        throw new Error('Failed to export agent history');
     }
+};
 
-    doc.save(`LogiTrack_Report_${date.replace(/\//g, '-')}.pdf`);
+/**
+ * Export Complex Monthly Report (Manager View)
+ */
+export const exportComplexMonthlyReport = async (
+    rawRecords: HistoryRecord[], 
+    title: string, 
+    filename: string
+): Promise<void> => {
+    try {
+        const ExcelJS = (await import('exceljs')).default;
+        const styles = createBaseStyles(ExcelJS);
+        
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = 'LogiTrack System';
+        
+        const worksheet = workbook.addWorksheet('Detailed Monthly View', {
+            views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }]
+        });
+
+        // Prepare data
+        const agentMap: Record<string, Array<{ total: number, delivered: number }>> = {};
+        const agentNames = new Set<string>();
+        const dayTotals = new Array(32).fill(null).map(() => ({ total: 0, delivered: 0 }));
+
+        // Collect agent names and initialize data structure
+        rawRecords.forEach(record => {
+            if (!record.agents) return;
+            
+            record.agents.forEach(agent => {
+                agentNames.add(agent.daName);
+            });
+        });
+
+        const sortedAgents = Array.from(agentNames).sort();
+
+        // Initialize agent map
+        sortedAgents.forEach(name => {
+            agentMap[name] = new Array(32).fill(null).map(() => ({ total: 0, delivered: 0 }));
+        });
+
+        // Fill data
+        rawRecords.forEach(record => {
+            const date = new Date(record.date);
+            const day = date.getDate();
+            if (day > 31) return;
+
+            record.agents?.forEach(agent => {
+                if (agentMap[agent.daName]) {
+                    agentMap[agent.daName][day] = {
+                        total: agent.total,
+                        delivered: agent.delivered
+                    };
+                    
+                    // Update day totals
+                    dayTotals[day].total += agent.total;
+                    dayTotals[day].delivered += agent.delivered;
+                }
+            });
+        });
+
+        // Build Header (Rows 1-3)
+        const headerRow1 = worksheet.getRow(1);
+        const headerRow2 = worksheet.getRow(2);
+        const headerRow3 = worksheet.getRow(3);
+
+        headerRow1.height = 30;
+        headerRow2.height = 25;
+        headerRow3.height = 20;
+
+        // Agent Name header (merged across 3 rows)
+        worksheet.mergeCells('A1:A3');
+        const nameHeader = worksheet.getCell('A1');
+        nameHeader.value = 'Agent Name';
+        nameHeader.style = {
+            font: styles.headerFont,
+            fill: { 
+                type: 'pattern', 
+                pattern: 'solid', 
+                fgColor: { argb: COLOR_PALETTE.HEADER_BG } 
+            },
+            alignment: styles.centerAlign,
+            border: BORDER_STYLES.THIN
+        };
+        worksheet.getColumn(1).width = 35;
+
+        // Helper function to create day blocks
+        const createDayBlock = (
+            startDay: number, 
+            endDay: number, 
+            blockLabel: string
+        ): number => {
+            let currentCol = worksheet.columnCount + 1;
+            const startCol = currentCol;
+            const endCol = currentCol + ((endDay - startDay + 1) * 2) - 1;
+
+            // Block header
+            worksheet.mergeCells(1, startCol, 1, endCol);
+            const blockHeader = worksheet.getCell(1, startCol);
+            blockHeader.value = `Days ${startDay} - ${endDay}`;
+            blockHeader.style = {
+                font: styles.headerFont,
+                fill: { 
+                    type: 'pattern', 
+                    pattern: 'solid', 
+                    fgColor: { argb: COLOR_PALETTE.HEADER_BG } 
+                },
+                alignment: styles.centerAlign,
+                border: BORDER_STYLES.THIN
+            };
+
+            // Individual day headers
+            for (let day = startDay; day <= endDay; day++) {
+                // Day number header
+                worksheet.mergeCells(2, currentCol, 2, currentCol + 1);
+                const dayHeader = worksheet.getCell(2, currentCol);
+                dayHeader.value = day;
+                dayHeader.style = {
+                    font: styles.subHeaderFont,
+                    fill: { 
+                        type: 'pattern', 
+                        pattern: 'solid', 
+                        fgColor: { argb: COLOR_PALETTE.SUBHEADER_BG } 
+                    },
+                    alignment: styles.centerAlign,
+                    border: BORDER_STYLES.THIN
+                };
+
+                // Metric headers
+                const volHeader = worksheet.getCell(3, currentCol);
+                volHeader.value = 'Total';
+                volHeader.style = {
+                    font: { size: 9 },
+                    alignment: styles.centerAlign,
+                    border: BORDER_STYLES.THIN
+                };
+
+                const delHeader = worksheet.getCell(3, currentCol + 1);
+                delHeader.value = 'Del';
+                delHeader.style = {
+                    font: { size: 9 },
+                    alignment: styles.centerAlign,
+                    border: BORDER_STYLES.THIN
+                };
+
+                worksheet.getColumn(currentCol).width = 6;
+                worksheet.getColumn(currentCol + 1).width = 6;
+
+                currentCol += 2;
+            }
+
+            // Block summary section
+            const summaryStartCol = currentCol;
+            const summaryEndCol = currentCol + 2;
+            
+            worksheet.mergeCells(1, summaryStartCol, 1, summaryEndCol);
+            const summaryHeader = worksheet.getCell(1, summaryStartCol);
+            summaryHeader.value = blockLabel;
+            summaryHeader.style = {
+                font: { ...styles.headerFont, color: { argb: COLOR_PALETTE.BLACK } },
+                fill: { 
+                    type: 'pattern', 
+                    pattern: 'solid', 
+                    fgColor: { argb: COLOR_PALETTE.AMAZON_YELLOW } 
+                },
+                alignment: styles.centerAlign,
+                border: BORDER_STYLES.THIN
+            };
+
+            // Summary headers
+            const summaryLabels = ['Total', 'Delivered', 'Rate %'];
+            summaryLabels.forEach((label, index) => {
+                worksheet.mergeCells(2, currentCol + index, 3, currentCol + index);
+                const labelCell = worksheet.getCell(2, currentCol + index);
+                labelCell.value = label;
+                labelCell.style = {
+                    font: styles.subHeaderFont,
+                    fill: { 
+                        type: 'pattern', 
+                        pattern: 'solid', 
+                        fgColor: { argb: COLOR_PALETTE.SUMMARY_BG } 
+                    },
+                    alignment: styles.centerAlign,
+                    border: BORDER_STYLES.THIN
+                };
+                worksheet.getColumn(currentCol + index).width = 10;
+            });
+
+            return currentCol + 3;
+        };
+
+        // Create day blocks
+        let currentColumn = 2; // Start from column B
+        currentColumn = createDayBlock(1, 10, '1st Period Summary');
+        currentColumn = createDayBlock(11, 20, '2nd Period Summary');
+        currentColumn = createDayBlock(21, 31, '3rd Period Summary');
+
+        // Monthly Total Section
+        const monthlyStartCol = currentColumn;
+        worksheet.mergeCells(1, monthlyStartCol, 1, monthlyStartCol + 2);
+        const monthlyHeader = worksheet.getCell(1, monthlyStartCol);
+        monthlyHeader.value = 'MONTHLY TOTAL';
+        monthlyHeader.style = {
+            font: styles.headerFont,
+            fill: { 
+                type: 'pattern', 
+                pattern: 'solid', 
+                fgColor: { argb: COLOR_PALETTE.HEADER_BG } 
+            },
+            alignment: styles.centerAlign,
+            border: BORDER_STYLES.THIN
+        };
+
+        const monthlyLabels = ['Total', 'Delivered', 'Rate %'];
+        monthlyLabels.forEach((label, index) => {
+            worksheet.mergeCells(2, currentColumn + index, 3, currentColumn + index);
+            const labelCell = worksheet.getCell(2, currentColumn + index);
+            labelCell.value = label;
+            labelCell.style = {
+                font: { ...styles.subHeaderFont, color: { argb: COLOR_PALETTE.TEXT_WHITE } },
+                fill: { 
+                    type: 'pattern', 
+                    pattern: 'solid', 
+                    fgColor: { argb: COLOR_PALETTE.AMAZON_LIGHT_BLUE } 
+                },
+                alignment: styles.centerAlign,
+                border: BORDER_STYLES.THIN
+            };
+            worksheet.getColumn(currentColumn + index).width = 12;
+        });
+
+        // Fill Data Rows
+        let currentRow = 4;
+
+        const fillRowData = (agentName: string, isGrandTotal: boolean = false): void => {
+            const row = worksheet.getRow(currentRow);
+            row.height = 22;
+            
+            // Agent name cell
+            const nameCell = row.getCell(1);
+            nameCell.value = agentName;
+            
+            if (isGrandTotal) {
+                nameCell.style = {
+                    font: { ...styles.agentFont, size: 14, color: { argb: COLOR_PALETTE.TEXT_WHITE } },
+                    fill: { 
+                        type: 'pattern', 
+                        pattern: 'solid', 
+                        fgColor: { argb: COLOR_PALETTE.HEADER_BG } 
+                    },
+                    alignment: styles.leftAlign,
+                    border: BORDER_STYLES.THIN
+                };
+            } else {
+                nameCell.style = {
+                    font: styles.agentFont,
+                    alignment: styles.leftAlign,
+                    border: BORDER_STYLES.THIN
+                };
+                
+                // Zebra striping for agent names
+                if (currentRow % 2 !== 0) {
+                    nameCell.fill = { 
+                        type: 'pattern', 
+                        pattern: 'solid', 
+                        fgColor: { argb: COLOR_PALETTE.ALTERNATE_ROW } 
+                    };
+                }
+            }
+
+            let column = 2;
+            
+            // Helper to process each 10-day block
+            const processBlock = (startDay: number, endDay: number): { total: number, delivered: number } => {
+                let blockTotal = 0;
+                let blockDelivered = 0;
+
+                for (let day = startDay; day <= endDay; day++) {
+                    let dayTotal = 0;
+                    let dayDelivered = 0;
+
+                    if (isGrandTotal) {
+                        dayTotal = dayTotals[day].total;
+                        dayDelivered = dayTotals[day].delivered;
+                    } else {
+                        const agentData = agentMap[agentName][day];
+                        if (agentData) {
+                            dayTotal = agentData.total;
+                            dayDelivered = agentData.delivered;
+                        }
+                    }
+
+                    // Total cell
+                    const totalCell = row.getCell(column);
+                    totalCell.value = dayTotal > 0 ? dayTotal : (isGrandTotal ? 0 : '');
+                    
+                    // Delivered cell
+                    const deliveredCell = row.getCell(column + 1);
+                    deliveredCell.value = dayTotal > 0 ? dayDelivered : (isGrandTotal ? 0 : '');
+
+                    // Cell styling
+                    const cellStyle: Partial<ExcelJS.Style> = {
+                        font: styles.dataFont,
+                        alignment: styles.centerAlign,
+                        border: BORDER_STYLES.THIN
+                    };
+
+                    if (isGrandTotal) {
+                        cellStyle.font = { 
+                            bold: true, 
+                            color: { argb: COLOR_PALETTE.TEXT_WHITE } 
+                        };
+                        cellStyle.fill = { 
+                            type: 'pattern', 
+                            pattern: 'solid', 
+                            fgColor: { argb: COLOR_PALETTE.HEADER_BG } 
+                        };
+                    } else if (dayTotal === 0) {
+                        cellStyle.fill = { 
+                            type: 'pattern', 
+                            pattern: 'solid', 
+                            fgColor: { argb: 'FFFAFAFA' } 
+                        };
+                    } else if (currentRow % 2 !== 0) {
+                        cellStyle.fill = { 
+                            type: 'pattern', 
+                            pattern: 'solid', 
+                            fgColor: { argb: COLOR_PALETTE.ALTERNATE_ROW } 
+                        };
+                    }
+
+                    totalCell.style = cellStyle;
+                    deliveredCell.style = cellStyle;
+
+                    blockTotal += dayTotal;
+                    blockDelivered += dayDelivered;
+                    column += 2;
+                }
+
+                // Block summary cells
+                const blockRate = blockTotal > 0 ? blockDelivered / blockTotal : 0;
+                
+                const summaryTotalCell = row.getCell(column);
+                summaryTotalCell.value = blockTotal;
+                summaryTotalCell.style = {
+                    font: { ...styles.dataFont, bold: true },
+                    alignment: styles.centerAlign,
+                    border: BORDER_STYLES.THIN,
+                    fill: { 
+                        type: 'pattern', 
+                        pattern: 'solid', 
+                        fgColor: { argb: COLOR_PALETTE.SUMMARY_BG } 
+                    }
+                };
+
+                const summaryDeliveredCell = row.getCell(column + 1);
+                summaryDeliveredCell.value = blockDelivered;
+                summaryDeliveredCell.style = summaryTotalCell.style;
+
+                const summaryRateCell = row.getCell(column + 2);
+                summaryRateCell.value = blockRate;
+                summaryRateCell.numFmt = '0.0%';
+                summaryRateCell.style = {
+                    ...summaryTotalCell.style,
+                    font: { 
+                        bold: true, 
+                        color: { argb: getPerformanceColor(blockRate * 100) } 
+                    }
+                };
+
+                if (isGrandTotal) {
+                    summaryTotalCell.fill.fgColor = { argb: COLOR_PALETTE.AMAZON_LIGHT_BLUE };
+                    summaryDeliveredCell.fill.fgColor = { argb: COLOR_PALETTE.AMAZON_LIGHT_BLUE };
+                    summaryRateCell.fill.fgColor = { argb: COLOR_PALETTE.AMAZON_LIGHT_BLUE };
+                    summaryRateCell.font.color = { argb: COLOR_PALETTE.TEXT_WHITE };
+                }
+
+                column += 3;
+                return { total: blockTotal, delivered: blockDelivered };
+            };
+
+            // Process each 10-day block
+            const block1 = processBlock(1, 10);
+            const block2 = processBlock(11, 20);
+            const block3 = processBlock(21, 31);
+
+            // Monthly totals
+            const monthlyTotal = block1.total + block2.total + block3.total;
+            const monthlyDelivered = block1.delivered + block2.delivered + block3.delivered;
+            const monthlyRate = monthlyTotal > 0 ? monthlyDelivered / monthlyTotal : 0;
+
+            const monthlyTotalCell = row.getCell(column);
+            monthlyTotalCell.value = monthlyTotal;
+            
+            const monthlyDeliveredCell = row.getCell(column + 1);
+            monthlyDeliveredCell.value = monthlyDelivered;
+            
+            const monthlyRateCell = row.getCell(column + 2);
+            monthlyRateCell.value = monthlyRate;
+            monthlyRateCell.numFmt = '0.0%';
+
+            const monthlyStyle: Partial<ExcelJS.Style> = {
+                font: { ...styles.dataFont, bold: true, size: 12 },
+                alignment: styles.centerAlign,
+                border: { 
+                    ...BORDER_STYLES.THIN,
+                    left: { style: 'medium', color: { argb: COLOR_PALETTE.AMAZON_DARK_BLUE } } 
+                },
+                fill: { 
+                    type: 'pattern', 
+                    pattern: 'solid', 
+                    fgColor: { argb: COLOR_PALETTE.SUBHEADER_BG } 
+                }
+            };
+
+            if (isGrandTotal) {
+                monthlyStyle.fill = { 
+                    type: 'pattern', 
+                    pattern: 'solid', 
+                    fgColor: { argb: COLOR_PALETTE.HEADER_BG } 
+                };
+                monthlyStyle.font = { 
+                    bold: true, 
+                    size: 12, 
+                    color: { argb: COLOR_PALETTE.TEXT_WHITE } 
+                };
+            } else {
+                monthlyRateCell.font = { 
+                    bold: true, 
+                    color: { argb: getPerformanceColor(monthlyRate * 100) } 
+                };
+            }
+
+            monthlyTotalCell.style = monthlyStyle;
+            monthlyDeliveredCell.style = monthlyStyle;
+            monthlyRateCell.style = monthlyStyle;
+
+            currentRow++;
+        };
+
+        // Fill agent rows
+        sortedAgents.forEach(agentName => fillRowData(agentName));
+
+        // Add separator row
+        const separatorRow = worksheet.getRow(currentRow);
+        separatorRow.height = 5;
+        for (let i = 1; i <= worksheet.columnCount; i++) {
+            const cell = separatorRow.getCell(i);
+            cell.fill = { 
+                type: 'pattern', 
+                pattern: 'solid', 
+                fgColor: { argb: COLOR_PALETTE.AMAZON_ORANGE } 
+            };
+            cell.border = { 
+                bottom: { 
+                    style: 'thick', 
+                    color: { argb: COLOR_PALETTE.AMAZON_ORANGE } 
+                } 
+            };
+        }
+        currentRow++;
+
+        // Fill grand total row
+        fillRowData('GRAND TOTAL', true);
+
+        // Add summary statistics
+        const summaryRow = currentRow + 2;
+        worksheet.getCell(`A${summaryRow}`).value = 'Report Summary:';
+        worksheet.getCell(`A${summaryRow}`).font = { bold: true, size: 12 };
+        
+        worksheet.getCell(`A${summaryRow + 1}`).value = `• Total Agents: ${sortedAgents.length}`;
+        worksheet.getCell(`A${summaryRow + 2}`).value = `• Total Days: ${rawRecords.length}`;
+        worksheet.getCell(`A${summaryRow + 3}`).value = `• Report Generated: ${new Date().toLocaleString()}`;
+
+        // Export
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { 
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+        });
+        const url = window.URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `${filename}.xlsx`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        window.URL.revokeObjectURL(url);
+
+    } catch (error) {
+        console.error('Export Complex Monthly Report failed:', error);
+        throw new Error('Failed to export complex monthly report');
+    }
+};
+
+/**
+ * Export Monthly Report (Alias for Advanced Report)
+ */
+export const exportMonthlyReport = async (
+    report: any[], 
+    month: string
+): Promise<void> => {
+    return exportAdvancedReport(report, `Monthly Report - ${month}`, `Monthly_Report_${month}`);
+};
+
+/**
+ * Export Yearly Report
+ */
+export const exportYearlyReport = async (
+    report: any[], 
+    year: string
+): Promise<void> => {
+    return exportAdvancedReport(report, `Annual Report - ${year}`, `Yearly_Report_${year}`);
+};
+
+/**
+ * Export to PDF (Basic Implementation)
+ */
+export const exportToPDF = async (data: ProcessedResult, date: string): Promise<void> => {
+    try {
+        const { jsPDF } = await import('jspdf');
+        
+        const doc = new jsPDF({
+            orientation: 'landscape',
+            unit: 'mm',
+            format: 'a4'
+        });
+
+        // Header
+        doc.setFillColor(35, 47, 62); // Amazon Dark Blue
+        doc.rect(0, 0, 297, 25, 'F');
+        
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(22);
+        doc.setFont('helvetica', 'bold');
+        doc.text('LogiTrack Station Report', 20, 15);
+        
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'normal');
+        doc.text('Final Delivery Daily Summary', 20, 22);
+
+        doc.setTextColor(255, 153, 0); // Amazon Orange
+        doc.setFontSize(14);
+        doc.text(date, 270, 15, { align: 'right' });
+
+        // Station Summary
+        const summaryY = 35;
+        doc.setFillColor(243, 244, 246);
+        doc.roundedRect(15, summaryY, 267, 20, 3, 3, 'F');
+        
+        doc.setTextColor(50, 50, 50);
+        doc.setFontSize(10);
+        doc.text('TOTAL VOLUME', 40, summaryY + 8, { align: 'center' });
+        doc.text('DELIVERED', 95, summaryY + 8, { align: 'center' });
+        doc.text('FAILED/RTO', 150, summaryY + 8, { align: 'center' });
+        doc.text('OFD', 205, summaryY + 8, { align: 'center' });
+        doc.text('SUCCESS RATE', 260, summaryY + 8, { align: 'center' });
+
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.text(data.grandTotal.total.toString(), 40, summaryY + 15, { align: 'center' });
+        
+        doc.setTextColor(16, 185, 129); // Emerald
+        doc.text(data.grandTotal.delivered.toString(), 95, summaryY + 15, { align: 'center' });
+        
+        doc.setTextColor(225, 29, 72); // Rose
+        doc.text((data.grandTotal.failed + data.grandTotal.rto).toString(), 150, summaryY + 15, { align: 'center' });
+        
+        doc.setTextColor(59, 130, 246); // Blue
+        doc.text(data.grandTotal.ofd.toString(), 205, summaryY + 15, { align: 'center' });
+        
+        doc.setTextColor(255, 153, 0); // Orange
+        doc.text(data.grandTotal.successRate.toFixed(1) + '%', 260, summaryY + 15, { align: 'center' });
+
+        // Table Header
+        let tableY = summaryY + 30;
+        doc.setFillColor(230, 230, 230);
+        doc.rect(15, tableY, 267, 10, 'F');
+        
+        doc.setTextColor(0, 0, 0);
+        doc.setFontSize(9);
+        doc.text('Agent Name', 20, tableY + 6);
+        doc.text('Delivered', 120, tableY + 6, { align: 'center' });
+        doc.text('Failed', 150, tableY + 6, { align: 'center' });
+        doc.text('OFD', 180, tableY + 6, { align: 'center' });
+        doc.text('RTO', 210, tableY + 6, { align: 'center' });
+        doc.text('Total', 240, tableY + 6, { align: 'center' });
+        doc.text('Rate', 275, tableY + 6, { align: 'center' });
+
+        tableY += 10;
+
+        // Table Body
+        doc.setFont('helvetica', 'normal');
+        data.summaries.forEach((summary, index) => {
+            if (tableY > 180) {
+                doc.addPage();
+                tableY = 20;
+            }
+            
+            // Striped background
+            if (index % 2 === 0) {
+                doc.setFillColor(250, 250, 250);
+                doc.rect(15, tableY - 6, 267, 8, 'F');
+            }
+
+            // Agent Name
+            doc.setTextColor(0, 0, 0);
+            doc.setFontSize(9);
+            doc.text(summary.daName, 20, tableY);
+            
+            // Numbers
+            doc.text(summary.delivered.toString(), 120, tableY, { align: 'center' });
+            doc.text(summary.failed.toString(), 150, tableY, { align: 'center' });
+            doc.text(summary.ofd.toString(), 180, tableY, { align: 'center' });
+            doc.text(summary.rto.toString(), 210, tableY, { align: 'center' });
+            doc.text(summary.total.toString(), 240, tableY, { align: 'center' });
+            
+            // Success Rate with color coding
+            if (summary.successRate >= 90) {
+                doc.setTextColor(16, 185, 129);
+            } else if (summary.successRate < 80) {
+                doc.setTextColor(225, 29, 72);
+            } else {
+                doc.setTextColor(255, 153, 0);
+            }
+            
+            doc.text(summary.successRate.toFixed(1) + '%', 275, tableY, { align: 'center' });
+            
+            tableY += 8;
+        });
+
+        // Footer
+        const footerY = 190;
+        doc.setDrawColor(200, 200, 200);
+        doc.line(15, footerY, 282, footerY);
+        
+        doc.setTextColor(100, 100, 100);
+        doc.setFontSize(8);
+        doc.text('Generated by LogiTrack System', 20, footerY + 5);
+        doc.text(new Date().toLocaleString(), 270, footerY + 5, { align: 'right' });
+
+        // Save PDF
+        doc.save(`LogiTrack_Report_${date.replace(/\//g, '-')}.pdf`);
+
+    } catch (error) {
+        console.error('Export to PDF failed:', error);
+        throw new Error('Failed to export report to PDF');
+    }
+};
+
+/**
+ * Export as Image (Screenshot)
+ */
+export const exportAsImage = async (elementId: string, filename?: string): Promise<void> => {
+    try {
+        const element = document.getElementById(elementId);
+        if (!element) {
+            throw new Error(`Element with id "${elementId}" not found`);
+        }
+
+        const html2canvas = (await import('html2canvas')).default;
+
+        // Prepare element for capture
+        const originalStyles = {
+            overflow: element.style.overflow,
+            transform: element.style.transform,
+            width: element.style.width,
+            borderRadius: element.style.borderRadius,
+            boxShadow: element.style.boxShadow,
+            margin: element.style.margin
+        };
+
+        element.classList.add('capturing');
+        
+        // Store current scroll position
+        const currentScrollY = window.scrollY;
+        const currentScrollX = window.scrollX;
+        
+        // Scroll to top for complete capture
+        window.scrollTo(0, 0);
+
+        // Wait for DOM updates
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        try {
+            const canvas = await html2canvas(element, {
+                scale: 2, // High resolution
+                useCORS: true,
+                backgroundColor: '#ffffff',
+                logging: false,
+                scrollY: 0,
+                windowWidth: document.documentElement.scrollWidth,
+                onclone: (clonedDoc, clonedElement) => {
+                    // Ensure proper rendering in cloned document
+                    clonedElement.style.transform = 'none';
+                    clonedElement.style.width = 'auto';
+                    clonedElement.style.borderRadius = '0';
+                    clonedElement.style.boxShadow = 'none';
+                    clonedElement.style.margin = '0';
+                    
+                    // Force center alignment for all table cells
+                    const cells = clonedElement.querySelectorAll('td, th');
+                    cells.forEach((cell: any) => {
+                        cell.style.display = 'table-cell';
+                        cell.style.verticalAlign = 'middle';
+                        cell.style.textAlign = 'center';
+                    });
+                }
+            });
+
+            // Convert to image
+            const imageData = canvas.toDataURL('image/png', 1.0);
+            
+            // Create download link
+            const link = document.createElement('a');
+            link.download = filename || `LogiTrack_Screenshot_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+            link.href = imageData;
+            link.style.display = 'none';
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+        } finally {
+            // Restore original state
+            element.classList.remove('capturing');
+            Object.assign(element.style, originalStyles);
+            window.scrollTo(currentScrollX, currentScrollY);
+        }
+
+    } catch (error) {
+        console.error('Export as Image failed:', error);
+        throw new Error('Failed to export as image');
+    }
+};
+
+/**
+ * Batch Export Function (All formats at once)
+ */
+export const exportBatchReport = async (
+    data: ProcessedResult,
+    options: {
+        includeExcel?: boolean;
+        includePDF?: boolean;
+        includeImage?: boolean;
+        elementId?: string;
+    } = {}
+): Promise<void> => {
+    const {
+        includeExcel = true,
+        includePDF = false,
+        includeImage = false,
+        elementId = 'exportable-content'
+    } = options;
+
+    const date = new Date().toLocaleDateString('en-GB');
+    
+    try {
+        const exports = [];
+        
+        if (includeExcel) {
+            exports.push(exportToExcel(data));
+        }
+        
+        if (includePDF) {
+            exports.push(exportToPDF(data, date));
+        }
+        
+        if (includeImage && elementId) {
+            exports.push(exportAsImage(elementId));
+        }
+        
+        await Promise.allSettled(exports);
+        
+    } catch (error) {
+        console.error('Batch export failed:', error);
+        throw new Error('Batch export failed');
+    }
+};
+
+/**
+ * Export Tracking Details (Shipment List)
+ */
+export const exportTrackingDetails = async (
+    trackings: TrackingDetail[],
+    agentName?: string
+): Promise<void> => {
+    try {
+        const ExcelJS = (await import('exceljs')).default;
+        
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Tracking Details');
+        
+        const title = agentName 
+            ? `Tracking Details - ${agentName}`
+            : 'Tracking Details Report';
+        
+        applyWorksheetHeader(worksheet, title, new Date().toLocaleDateString());
+        
+        // Headers
+        const headers = ['Tracking ID', 'Status', 'Agent', 'Date', 'Notes'];
+        const headerRow = worksheet.getRow(5);
+        headerRow.values = headers;
+        headerRow.height = 30;
+        
+        headerRow.eachCell((cell) => {
+            cell.font = { bold: true, color: { argb: COLOR_PALETTE.TEXT_WHITE } };
+            cell.fill = { 
+                type: 'pattern', 
+                pattern: 'solid', 
+                fgColor: { argb: COLOR_PALETTE.HEADER_BG } 
+            };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            cell.border = BORDER_STYLES.THICK_ORANGE;
+        });
+        
+        // Data rows
+        trackings.forEach((tracking, index) => {
+            const row = worksheet.addRow([
+                tracking.id,
+                tracking.status.toUpperCase(),
+                tracking.agent || 'N/A',
+                tracking.date || new Date().toISOString().split('T')[0],
+                tracking.notes || ''
+            ]);
+            
+            // Status color coding
+            const statusCell = row.getCell(2);
+            switch (tracking.status.toLowerCase()) {
+                case 'delivered':
+                    statusCell.font = { color: { argb: COLOR_PALETTE.SUCCESS }, bold: true };
+                    break;
+                case 'failed':
+                case 'rto':
+                    statusCell.font = { color: { argb: COLOR_PALETTE.ERROR }, bold: true };
+                    break;
+                case 'ofd':
+                    statusCell.font = { color: { argb: COLOR_PALETTE.WARNING }, bold: true };
+                    break;
+            }
+            
+            // Zebra striping
+            if (index % 2 !== 0) {
+                row.eachCell({ includeEmpty: true }, (cell) => {
+                    cell.fill = { 
+                        type: 'pattern', 
+                        pattern: 'solid', 
+                        fgColor: { argb: COLOR_PALETTE.ALTERNATE_ROW } 
+                    };
+                });
+            }
+            
+            row.height = 22;
+        });
+        
+        // Column widths
+        worksheet.columns = [
+            { width: 25 }, // Tracking ID
+            { width: 15 }, // Status
+            { width: 20 }, // Agent
+            { width: 15 }, // Date
+            { width: 40 }  // Notes
+        ];
+        
+        // Auto filter
+        applyAutoFilter(worksheet, 5, headers.length);
+        
+        // Export
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { 
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+        });
+        const url = window.URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `Tracking_Details_${new Date().toISOString().split('T')[0]}.xlsx`;
+        anchor.click();
+        
+    } catch (error) {
+        console.error('Export Tracking Details failed:', error);
+        throw new Error('Failed to export tracking details');
+    }
+};
+
+export default {
+    exportToExcel,
+    exportAdvancedReport,
+    exportAgentHistory,
+    exportMonthlyReport,
+    exportYearlyReport,
+    exportComplexMonthlyReport,
+    exportToPDF,
+    exportAsImage,
+    exportBatchReport,
+    exportTrackingDetails,
+    ReportType,
+    PerformanceRating
 };
