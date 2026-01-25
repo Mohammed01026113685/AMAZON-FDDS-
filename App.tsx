@@ -506,18 +506,44 @@ const App: React.FC = () => {
     addToast('info', `${t('copied')} ${all.length} tracking numbers!`);
   };
 
+  // --- Export Functions ---
   const handleImageExport = async () => {
+    if (!data) return;
     setExporting(true);
-    await exportAsImage('table-container');
-    setExporting(false);
+    try {
+      await exportAsImage('table-container');
+      addToast('success', 'تم تصدير الصورة بنجاح');
+    } catch (error) {
+      addToast('error', 'فشل تصدير الصورة');
+    } finally {
+      setExporting(false);
+    }
   };
   
   const handlePDFExport = () => {
     if (!data) return;
     setExporting(true);
-    exportToPDF(data, reportDate);
-    setExporting(false);
-    addToast('success', t('pdfGenerated'));
+    try {
+      exportToPDF(data, reportDate);
+      addToast('success', t('pdfGenerated'));
+    } catch (error) {
+      addToast('error', 'فشل إنشاء ملف PDF');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleExcelExport = () => {
+    if (!data) return;
+    setExporting(true);
+    try {
+      exportToExcel(data);
+      addToast('success', 'تم تصدير ملف Excel بنجاح');
+    } catch (error) {
+      addToast('error', 'فشل تصدير ملف Excel');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const handleTrackShipment = (e: React.FormEvent) => {
@@ -836,6 +862,19 @@ const App: React.FC = () => {
                               <i className="fa-solid fa-shield"></i>  Admin
                             </button>
                         )}
+                        
+                        {/* Export Buttons */}
+                        <div className="flex bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-600">
+                            <button onClick={handleImageExport} disabled={exporting} className={`px-3 h-12 text-gray-600 dark:text-gray-300 hover:text-[#232F3E] hover:bg-gray-50 dark:hover:bg-gray-700 rounded-${dir==='rtl'?'r':'l'}-xl transition-colors`} title="تصدير كصورة">
+                              <i className="fa-solid fa-image"></i>
+                            </button>
+                            <button onClick={handlePDFExport} className={`px-3 h-12 text-gray-600 dark:text-gray-300 hover:text-[#232F3E] hover:bg-gray-50 dark:hover:bg-gray-700 border-${dir==='rtl'?'l':'r'} border-gray-100 dark:border-gray-600 transition-colors`} title="تصدير كملف PDF">
+                              <i className="fa-solid fa-file-pdf text-red-600"></i>
+                            </button>
+                            <button onClick={handleExcelExport} className={`px-3 h-12 text-gray-600 dark:text-gray-300 hover:text-[#232F3E] hover:bg-gray-50 dark:hover:bg-gray-700 rounded-${dir==='rtl'?'l':'r'}-xl border-${dir==='rtl'?'l':'r'} border-gray-100 dark:border-gray-600 transition-colors`} title="تصدير كملف Excel">
+                              <i className="fa-solid fa-file-excel text-emerald-600"></i>
+                            </button>
+                        </div>
                         
                         <button onClick={copyAllFailed} className="whitespace-nowrap btn-amz-dark px-4 h-12 rounded-xl text-sm font-bold flex items-center justify-center gap-2 min-w-[120px]">
                           <i className="fa-solid fa-copy"></i> {t('copyRto')}
