@@ -501,9 +501,26 @@ const App: React.FC = () => {
 
   const copyAllFailed = () => {
     if (!data) return;
-    const all = data.summaries.flatMap(s => s.pendingTrackings);
-    navigator.clipboard.writeText(all.join('\n'));
-    addToast('info', `${t('copied')} ${all.length} tracking numbers!`);
+    // جمع الشحنات OFD فقط من جميع الوكالات
+    const allOFDTrackings: string[] = [];
+    
+    data.summaries.forEach(agent => {
+      if (agent.allTrackings) {
+        // البحث عن الشحنات بحالة OFD
+        const ofdTrackings = agent.allTrackings
+          .filter(tracking => tracking.status === 'ofd')
+          .map(tracking => tracking.id);
+        
+        allOFDTrackings.push(...ofdTrackings);
+      }
+    });
+    
+    if (allOFDTrackings.length > 0) {
+      navigator.clipboard.writeText(allOFDTrackings.join('\n'));
+      addToast('info', `${t('copied')} ${allOFDTrackings.length} OFD tracking numbers!`);
+    } else {
+      addToast('warning', 'No OFD shipments found to copy');
+    }
   };
 
   // --- Export Functions ---
@@ -877,7 +894,7 @@ const App: React.FC = () => {
                         </div>
                         
                         <button onClick={copyAllFailed} className="whitespace-nowrap btn-amz-dark px-4 h-12 rounded-xl text-sm font-bold flex items-center justify-center gap-2 min-w-[120px]">
-                          <i className="fa-solid fa-copy"></i> {t('copyRto')}
+                          <i className="fa-solid fa-copy"></i> Copy OFD
                         </button>
                     </div>
                   </>
