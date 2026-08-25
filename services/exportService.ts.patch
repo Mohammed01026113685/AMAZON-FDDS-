@@ -1,0 +1,69 @@
+--- services/exportService.ts
++++ services/exportService.ts
+@@ -1,4 +1,4 @@
+-import { ProcessedResult, HistoryRecord } from '../types';
++import { ProcessedResult, HistoryRecord, TrackingDetail } from '../types';
+ import type ExcelJS from 'exceljs';
+ 
+ // --- COLORS PALETTE ---
+@@ -470,6 +470,54 @@
+     window.URL.revokeObjectURL(url);
+ };
+ 
++export const exportFailedRtoReport = async (rawRecords: HistoryRecord[], title: string, filename: string) => {
++    const ExcelJS = (await import('exceljs')).default;
++    const styles = getStyles(ExcelJS as any);
++    const workbook = new ExcelJS.Workbook();
++    
++    const failedShipments: { tracking: string, date: string, agent: string }[] = [];
++    const rtoShipments: { tracking: string, date: string, agent: string }[] = [];
++    
++    rawRecords.forEach(rec => {
++        if(!rec.agents) return;
++        rec.agents.forEach(agent => {
++            if(agent.shipmentDetails) {
++                agent.shipmentDetails.forEach(shipment => {
++                    if (shipment.status === 'failed') {
++                        failedShipments.push({ tracking: shipment.id, date: rec.date, agent: agent.daName });
++                    } else if (shipment.status === 'rto') {
++                        rtoShipments.push({ tracking: shipment.id, date: rec.date, agent: agent.daName });
++                    }
++                });
++            }
++        });
++    });
++
++    const createSheet = (sheetName: string, data: { tracking: string, date: string, agent: string }[], themeColor: string) => {
++        const worksheet = workbook.addWorksheet(sheetName);
++        worksheet.mergeCells('A1:C1');
++        const titleCell = worksheet.getCell('A1');
++        titleCell.value = `${sheetName} - ${title}`;
++        titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: themeColor } };
++        titleCell.font = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
++        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
++        worksheet.getRow(2).values = ['Date', 'Agent Name', 'Tracking ID'];
++        worksheet.getRow(2).eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEAEDED' } }; cell.font = { bold: true }; cell.alignment = { horizontal: 'center' }; cell.border = styles.thinBorder as any; });
++        worksheet.columns = [{ width: 15 }, { width: 30 }, { width: 25 }];
++        data.forEach((row, idx) => {
++            const r = worksheet.addRow([row.date, row.agent, row.tracking]);
++            r.eachCell(cell => { cell.alignment = { horizontal: 'center', vertical: 'middle' }; cell.border = styles.thinBorder as any; });
++            if (idx % 2 !== 0) r.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8F8F8' } }; });
++        });
++    };
++
++    createSheet('Failed Shipments', failedShipments, 'FFCC0C39');
++    createSheet('RTO Shipments', rtoShipments, 'FFE99309');
++
++    const buffer = await workbook.xlsx.writeBuffer();
++    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
++    const url = window.URL.createObjectURL(blob);
++    const a = document.createElement('a');
++    a.href = url;
++    a.download = `${filename}.xlsx`;
++    a.click();
++    window.URL.revokeObjectURL(url);
++};
++
+ // ==========================================
+ // 2. HTML TO PDF EXPORT (jsPDF + html2canvas)
+ // ==========================================

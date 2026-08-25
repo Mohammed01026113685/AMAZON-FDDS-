@@ -1,0 +1,389 @@
+
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>amazonFDDS | Performance Center</title>
+    <link rel="icon" type="image/png" href="https://upload.wikimedia.org/wikipedia/commons/d/de/Amazon_icon.png">
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+Arabic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+          darkMode: 'class',
+          theme: {
+            extend: {
+              fontFamily: {
+                sans: ['"Plus Jakarta Sans"', '"Noto Sans Arabic"', 'sans-serif'],
+                mono: ['"Plus Jakarta Sans"', 'monospace'],
+              },
+              colors: {
+                dark: {
+                  bg: '#0A0A0A',
+                  card: '#141414',
+                  border: '#262626'
+                }
+              }
+            }
+          }
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        :root {
+            --amz-dark: #232F3E;
+            --amz-light: #37475A;
+            --amz-orange: #FF9900;
+            --amz-blue: #007185;
+        }
+        
+        body { 
+             font-family: 'Plus Jakarta Sans', 'Noto Sans Arabic', sans-serif;
+             overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+            background-color: #EAEDED;
+        }
+
+        .dark body {
+            background-color: #0A0A0A;
+            color: #FAFAFA;
+        }
+
+        /* Dark Mode Transitions */
+        body, .modern-card, .glass-header {
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+        }
+
+        /* Modern Glass Effect */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.03);
+        }
+        
+        .dark .glass-panel {
+            background: rgba(20, 20, 20, 0.7);
+            border-color: rgba(255, 255, 255, 0.05);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+        }
+
+        .glass-header {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+        }
+
+        .dark .glass-header {
+            background: rgba(10, 10, 10, 0.8);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        /* Buttons */
+        .btn-amz-primary {
+            background: #FFD814;
+            border: 1px solid #FCD200;
+            border-radius: 8px;
+            color: #0F1111;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 5px rgba(213,217,217,0.5);
+        }
+        .btn-amz-primary:hover {
+            background: #F7CA00;
+            border-color: #F2C200;
+            transform: translateY(-1px);
+            box-shadow: 0 5px 12px rgba(0,0,0,0.15);
+        }
+        .btn-amz-primary:active { transform: translateY(0); }
+        
+        .btn-amz-dark {
+            background: var(--amz-dark);
+            color: white;
+            transition: all 0.2s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .btn-amz-dark:hover {
+            background: #37475A;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+        }
+
+        /* Animations */
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes pulse-soft { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
+        @keyframes float { 0% { transform: translateY(0px); } 50% { transform: translateY(-10px); } 100% { transform: translateY(0px); } }
+
+        .animate-fade-in { animation: fadeIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+        .animate-slide-up { animation: slideUp 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+        .animate-pulse-soft { animation: pulse-soft 2s infinite ease-in-out; }
+        .animate-float { animation: float 3s ease-in-out infinite; }
+
+        /* Card Styles */
+        .modern-card {
+            background: #FFFFFF;
+            border-radius: 8px;
+            border: 1px solid #D5D9D9;
+            box-shadow: none;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .dark .modern-card {
+            background: #141414;
+            border-color: #262626;
+            box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.2);
+        }
+
+        .modern-card:hover {
+            box-shadow: 0 4px 12px 0 rgba(0,0,0,0.05);
+            border-color: rgba(0,0,0,0.1);
+            transform: none;
+        }
+        
+        .dark .modern-card:hover {
+            box-shadow: 0 12px 30px -4px rgba(0, 0, 0, 0.4);
+            border-color: #333;
+        }
+
+        /* Table Styles */
+        .custom-table th { 
+            background-color: #f8fafc;
+            color: #475569;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 1rem;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        .dark .custom-table th {
+            background-color: #1A1A1A;
+            color: #94A3B8;
+            border-bottom-color: #2A2A2A;
+        }
+
+        .custom-table td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #f1f5f9;
+            font-size: 0.9rem;
+            transition: background 0.1s;
+        }
+        
+        .dark .custom-table td {
+            border-bottom-color: #1A1A1A;
+            color: #E2E8F0;
+        }
+
+        .custom-table tr:hover td { background-color: #fcfeff; }
+        .dark .custom-table tr:hover td { background-color: #1A1A1A; }
+        
+        .editable-input {
+            background: transparent;
+            text-align: center;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            width: 100%;
+            font-weight: 700;
+            transition: all 0.2s;
+        }
+        .editable-input:hover, .editable-input:focus {
+            background: #fff;
+            border-color: #e2e8f0;
+            box-shadow: 0 0 0 2px rgba(255, 153, 0, 0.2);
+        }
+        
+        .dark .editable-input:hover, .dark .editable-input:focus {
+            background: #0F1111;
+            border-color: #37475A;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #E5E7EB; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #D1D5DB; }
+        
+        .dark ::-webkit-scrollbar-thumb { background: #262626; }
+        .dark ::-webkit-scrollbar-thumb:hover { background: #404040; }
+
+        /* Export Mode */
+        #table-container.capturing {
+            width: 1000px !important;
+            padding: 20px !important;
+            background: white !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+        }
+        
+        /* Ensure export is always light mode for printability */
+        .dark #table-container.capturing {
+            background: white !important;
+            color: black !important;
+        }
+        .dark #table-container.capturing td, .dark #table-container.capturing th {
+            color: black !important;
+            border-color: #eee !important;
+            background: white !important;
+        }
+
+        #table-container.capturing .no-print { display: none !important; }
+        #table-container.capturing .card-view { display: none !important; }
+        #table-container.capturing .table-view { display: table !important; }
+
+        .modal-overlay {
+            backdrop-filter: blur(8px);
+            background: rgba(15, 23, 42, 0.6);
+        }
+        
+        .dark .modal-overlay {
+            background: rgba(0, 0, 0, 0.8);
+        }
+        
+        /* Full Screen Presentation Mode */
+        .presentation-mode {
+            background-color: #1a202c !important;
+            color: #fff !important;
+        }
+    
+        /* --- Print Stylesheet --- */
+        @media print {
+            * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+
+            @page {
+                size: A4 portrait;
+                margin: 15mm;
+            }
+            body {
+                background: white !important;
+                color: black !important;
+            }
+            /* Hide UI elements */
+            .no-print, header, .glass-header, button, .modal-overlay {
+                display: none !important;
+            }
+            
+            /* Hide the desktop table */
+            .table-view {
+                display: none !important;
+            }
+            
+            /* Show and format Mobile Cards as a Two-Column Grid */
+            .card-view {
+                display: block !important;
+                background: white !important;
+                padding: 0 !important;
+            }
+            .card-view .flex.justify-between.items-center.mb-4 {
+                /* Hide sorting controls */
+                display: none !important;
+            }
+            .card-view .space-y-3 {
+                display: grid !important;
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                gap: 16px !important;
+            }
+            .card-view .space-y-3 > * {
+                margin-top: 0 !important;
+                margin-bottom: 0 !important;
+                break-inside: avoid;
+                page-break-inside: avoid;
+                border: 1px solid #ccc !important;
+                box-shadow: none !important;
+            }
+            
+            /* General container reset */
+            #table-container {
+                box-shadow: none !important;
+                border: none !important;
+                width: 100% !important;
+            }
+            
+            .show-on-export {
+                display: flex !important;
+                background: white !important;
+                color: black !important;
+                padding: 0 0 20px 0 !important;
+                border-bottom: 2px solid #000 !important;
+                margin-bottom: 20px !important;
+            }
+            
+            .show-on-export h2, .show-on-export span, .show-on-export p {
+                color: black !important;
+            }
+        }
+        /* --- End Print Stylesheet --- */
+
+    
+        /* Scrollbar styles */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.02);
+            border-radius: 8px;
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(255,255,255,0.02);
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(0,0,0,0.15);
+            border-radius: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(0,0,0,0.25);
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.15);
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(255,255,255,0.25);
+        }
+
+        /* Fix for html2canvas export */
+        .capturing .scrollable-table-wrapper {
+            max-height: none !important;
+            overflow: visible !important;
+        }
+        </style>
+<script type="importmap">
+{
+  "imports": {
+    "firebase/": "https://esm.sh/firebase@^12.7.0/",
+    "exceljs": "https://esm.sh/exceljs@^4.4.0",
+    "html2canvas": "https://esm.sh/html2canvas@^1.4.1",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom": "https://esm.sh/react-dom@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "xlsx": "https://esm.sh/xlsx@^0.18.5",
+    "chart.js/auto": "https://esm.sh/chart.js/auto",
+    "react-chartjs-2": "https://esm.sh/react-chartjs-2",
+    "chart.js/": "https://esm.sh/chart.js@^4.5.1/",
+    "canvas-confetti": "https://esm.sh/canvas-confetti@1.6.0",
+    "jspdf": "https://esm.sh/jspdf@^4.0.0",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "@google/genai": "https://esm.sh/@google/genai@^1.36.0",
+    "lucide-react": "https://esm.sh/lucide-react@^0.474.0",
+    "framer-motion": "https://esm.sh/framer-motion@^12.0.0",
+    "motion/react": "https://esm.sh/motion@^12.0.0/react"
+  }
+}
+</script>
+</head>
+<body class="transition-colors duration-300">
+    <div id="root"></div>
+    <script type="module" src="./index.tsx"></script>
+</body>
+</html>
