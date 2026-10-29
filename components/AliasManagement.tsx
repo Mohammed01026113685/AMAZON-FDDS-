@@ -31,6 +31,7 @@ const AliasManagement: React.FC<AliasManagementProps> = ({ onClose, onAliasesUpd
     const [filterStation, setFilterStation] = useState<string>(userStationAccess === 'All' ? 'All' : userStationAccess);
     const [selectedAgent, setSelectedAgent] = useState<AgentStat | null>(null);
     const [targetName, setTargetName] = useState('');
+    const [activeTab, setActiveTab] = useState<'history' | 'rules'>('history');
     
     // Actions State
     const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
@@ -91,7 +92,7 @@ const AliasManagement: React.FC<AliasManagementProps> = ({ onClose, onAliasesUpd
     }, [history, filterStation]);
 
     const filteredAgents = useMemo(() => {
-        return agentsList.filter(a => a.name.toLowerCase().includes(searchTerm.toLowerCase()));
+        return agentsList.filter(a => (a.name || "").toLowerCase().includes((searchTerm || "").toLowerCase()));
     }, [agentsList, searchTerm]);
 
     // --- 3. Interaction Handlers ---
@@ -115,6 +116,44 @@ const AliasManagement: React.FC<AliasManagementProps> = ({ onClose, onAliasesUpd
         if (newSet.has(id)) newSet.delete(id);
         else newSet.add(id);
         setSelectedDocIds(newSet);
+    };
+
+    
+    const handleDeleteRule = async (originalName: string) => {
+        if (!window.confirm(`هل أنت متأكد من حذف القاعدة لـ "${originalName}"؟`)) return;
+        const newAliases = { ...aliases };
+        delete newAliases[originalName];
+        setIsProcessing(true);
+        setProcessStep('alias');
+        try {
+            await saveAliases(newAliases);
+            setAliases(newAliases);
+            onAliasesUpdated(newAliases);
+        } catch(e: any) {
+            alert("Error: " + e.message);
+        } finally {
+            setIsProcessing(false);
+            setProcessStep('');
+        }
+    };
+
+    const handleUpdateRule = async (originalName: string, newTargetName: string) => {
+        if (!newTargetName.trim()) return;
+        if (newTargetName.trim() === aliases[originalName]) return;
+        
+        const newAliases = { ...aliases, [originalName]: cleanName(newTargetName) };
+        setIsProcessing(true);
+        setProcessStep('alias');
+        try {
+            await saveAliases(newAliases);
+            setAliases(newAliases);
+            onAliasesUpdated(newAliases);
+        } catch(e: any) {
+            alert("Error: " + e.message);
+        } finally {
+            setIsProcessing(false);
+            setProcessStep('');
+        }
     };
 
     const handleDeleteGlobally = async () => {
@@ -198,7 +237,7 @@ const AliasManagement: React.FC<AliasManagementProps> = ({ onClose, onAliasesUpd
 
     return (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 modal-overlay animate-fade-in" onClick={onClose}>
-            <div className="bg-white dark:bg-[#191E26] w-full max-w-6xl rounded-xl shadow-2xl overflow-hidden animate-scale-in flex flex-col h-[85vh] border border-gray-700" onClick={e => e.stopPropagation()}>
+            <div className="bg-white dark:bg-[#191E26] w-full max-w-6xl rounded-xl shadow-2xl overflow-hidden animate-scale-in flex flex-col h-[85vh] border border-gray-700" onClick={e => e.stopPropagation()}>                
                 
                 {/* Top Header */}
                 <div className="bg-[#232F3E] text-white p-4 flex justify-between items-center shadow-md z-10">
@@ -215,234 +254,291 @@ const AliasManagement: React.FC<AliasManagementProps> = ({ onClose, onAliasesUpd
                         <i className="fa-solid fa-xmark"></i>
                     </button>
                 </div>
+                
+                {/* Tabs */}
+                <div className="flex bg-white dark:bg-[#191E26] border-b border-[#D5D9D9] dark:border-gray-700 shrink-0">
+                    <button 
+                        onClick={() => setActiveTab('history')}
+                        className={`flex-1 py-3 text-sm font-bold text-center border-b-2 transition-colors ${activeTab === 'history' ? 'border-[#FF9900] text-[#232F3E] dark:text-white' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                    >
+                        سجل التعديلات والمناديب
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab('rules')}
+                        className={`flex-1 py-3 text-sm font-bold text-center border-b-2 transition-colors ${activeTab === 'rules' ? 'border-[#FF9900] text-[#232F3E] dark:text-white' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                    >
+                        قواعد التعديل الحالية (Aliases)
+                    </button>
+                </div>
 
                 {/* Main Content - Split View */}
-                <div className="flex flex-1 overflow-hidden">
+                <div className="flex flex-1 overflow-hidden relative">
                     
-                    {/* LEFT PANEL: AGENT LIST */}
-                    <div className={`w-1/3 bg-[#f3f4f6] dark:bg-[#111315] ${dir==='rtl'?'border-l':'border-r'} border-[#D5D9D9] dark:border-gray-700 flex flex-col`}>
-                        {/* Search Bar & Station Filter */}
-                        <div className="p-4 bg-white dark:bg-[#191E26] border-b border-[#D5D9D9] dark:border-gray-700 shadow-sm z-10 flex flex-col gap-3">
-                            {userStationAccess === 'All' && (
-                                <select 
-                                    value={filterStation} 
-                                    onChange={(e) => setFilterStation(e.target.value)}
-                                    className="w-full bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-4 py-2.5 rounded-lg text-sm font-bold outline-none border border-blue-100 dark:border-blue-800 cursor-pointer"
-                                >
-                                    <option value="All">كل المحطات (All Stations)</option>
-                                    {STATIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                                </select>
-                            )}
-                            <div className="relative">
-                                <i className="fa-solid fa-search absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
-                                <input 
-                                    type="text" 
-                                    placeholder={t('searchAgentHistory')}
-                                    value={searchTerm}
-                                    onChange={e => setSearchTerm(e.target.value)}
-                                    className={`w-full ${dir==='rtl'?'pl-4 pr-10':'pr-4 pl-10'} py-2.5 rounded-lg border border-[#D5D9D9] dark:border-gray-600 focus:border-[#FF9900] focus:ring-1 focus:ring-[#FF9900] outline-none font-bold text-gray-700 dark:text-white bg-gray-50 dark:bg-gray-700 focus:bg-white dark:focus:bg-gray-600 transition-all`}
-                                    dir={dir}
-                                />
-                            </div>
-                            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 flex justify-between px-1">
-                                <span>{t('totalAgents').replace('{n}', agentsList.length.toString())}</span>
-                                {isLoading && <span className="text-[#FF9900] animate-pulse"><i className="fa-solid fa-circle-notch fa-spin"></i> {t('updating')}</span>}
-                            </div>
-                        </div>
-
-                        {/* List */}
-                        <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
-                            {filteredAgents.map((agent) => (
-                                <div 
-                                    key={agent.name}
-                                    onClick={() => handleSelectAgent(agent)}
-                                    className={`p-3 rounded-xl cursor-pointer transition-all border group relative overflow-hidden
-                                        ${selectedAgent?.name === agent.name 
-                                            ? 'bg-white dark:bg-[#232F3E] border-[#FF9900] shadow-md ring-1 ring-[#FF9900]' 
-                                            : 'bg-white dark:bg-[#191E26] border-[#D5D9D9] dark:border-gray-700 hover:border-[#D5D9D9] dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-[#2A2F3A]'
-                                        }`}
-                                >
-                                    <div className="flex justify-between items-center relative z-10">
-                                        <div className={dir==='rtl'?'text-right':'text-left'}>
-                                            <div className="font-bold text-[#232F3E] dark:text-white text-sm group-hover:text-[#007185] dark:group-hover:text-[#4DB6AC] transition-colors">{agent.name}</div>
-                                            <div className="text-[10px] text-gray-400 mt-1 flex gap-2">
-                                                <span><i className="fa-regular fa-clock"></i> {agent.lastSeen}</span>
-                                                <span className={aliases[cleanName(agent.name)] ? "text-emerald-600 font-bold" : "hidden"}>
-                                                    <i className="fa-solid fa-link"></i> {t('linked')}
-                                                </span>
-                                            </div>
-                                        </div>
-                                        <div className="text-center bg-gray-100 dark:bg-gray-800 rounded-lg p-1.5 min-w-[50px]">
-                                            <div className="text-xs font-black text-[#232F3E] dark:text-white">{agent.totalOrders}</div>
-                                            <div className="text-[9px] text-gray-500 uppercase">{t('shipment')}</div>
-                                        </div>
-                                    </div>
-                                    {selectedAgent?.name === agent.name && (
-                                        <div className={`absolute ${dir==='rtl'?'left-0':'right-0'} top-0 bottom-0 w-1 bg-[#FF9900]`}></div>
+                    {activeTab === 'history' && (
+                        <>
+                            {/* LEFT PANEL: AGENT LIST */}
+                            <div className={`w-1/3 bg-[#f3f4f6] dark:bg-[#111315] ${dir==='rtl'?'border-l':'border-r'} border-[#D5D9D9] dark:border-gray-700 flex flex-col`}>
+                                {/* Search Bar & Station Filter */}
+                                <div className="p-4 bg-white dark:bg-[#191E26] border-b border-[#D5D9D9] dark:border-gray-700 shadow-sm z-10 flex flex-col gap-3">
+                                    {userStationAccess === 'All' && (
+                                        <select 
+                                            value={filterStation} 
+                                            onChange={(e) => setFilterStation(e.target.value)}
+                                            className="w-full bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-4 py-2.5 rounded-lg text-sm font-bold outline-none border border-blue-100 dark:border-blue-800 cursor-pointer"
+                                        >
+                                            <option value="All">{t('allStations')}</option>
+                                            {STATIONS.filter(s => s !== 'ALL').map(s => (
+                                                <option key={s} value={s}>{s}</option>
+                                            ))}
+                                        </select>
                                     )}
-                                </div>
-                            ))}
-                            {filteredAgents.length === 0 && !isLoading && (
-                                <div className="text-center py-10 text-gray-400">
-                                    <i className="fa-solid fa-ghost text-4xl mb-2 opacity-20"></i>
-                                    <p>{t('noResults')}</p>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* RIGHT PANEL: DETAILS & ACTIONS */}
-                    <div className="w-2/3 bg-white dark:bg-[#191E26] flex flex-col relative">
-                        {selectedAgent ? (
-                            <>
-                                {/* Agent Header Stats */}
-                                <div className="p-6 border-b border-[#D5D9D9] dark:border-gray-700 bg-gradient-to-br from-white to-orange-50/30 dark:from-[#191E26] dark:to-orange-900/10">
-                                    <div className="flex justify-between items-start mb-6">
-                                        <div>
-                                            <h2 className="text-3xl font-black text-[#232F3E] dark:text-white mb-1">{selectedAgent.name}</h2>
-                                            <div className="flex gap-2 text-sm">
-                                                <span className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded text-xs font-bold border border-[#D5D9D9] dark:border-gray-600">{t('currentName')}</span>
-                                                {aliases[cleanName(selectedAgent.name)] && (
-                                                    <span className="bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded text-xs font-bold border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
-                                                        <i className="fa-solid fa-arrow-right"></i>
-                                                        {t('autoConvertTo')}: {aliases[cleanName(selectedAgent.name)]}
-                                                    </span>
-                                                )}
-                                                {/* DELETE BUTTON */}
-                                                <button onClick={handleDeleteGlobally} className="bg-rose-50 hover:bg-rose-100 text-rose-600 dark:bg-rose-900/20 dark:hover:bg-rose-900/40 dark:text-rose-400 px-2 py-0.5 rounded text-xs font-bold border border-rose-200 dark:border-rose-800 transition-colors flex items-center gap-1">
-                                                    <i className="fa-solid fa-trash-can"></i> {t('delete')}
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <div className="flex gap-4">
-                                            <div className="text-center">
-                                                <div className="text-2xl font-black text-emerald-500">{selectedAgent.totalDelivered}</div>
-                                                <div className="text-[10px] text-gray-400 font-bold uppercase">Delivered</div>
-                                            </div>
-                                            <div className="w-px bg-gray-200 dark:bg-gray-700 h-10"></div>
-                                            <div className="text-center">
-                                                <div className="text-2xl font-black text-[#232F3E] dark:text-white">{selectedAgent.totalOrders}</div>
-                                                <div className="text-[10px] text-gray-400 font-bold uppercase">Total</div>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Action Box */}
-                                    <div className="bg-white dark:bg-[#191E26] border border-[#D5D9D9] dark:border-gray-700 rounded-xl p-4 shadow-sm ring-1 ring-gray-100 dark:ring-gray-700">
-                                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-2">{t('editMerge')}</label>
-                                        <div className="flex gap-3">
-                                            <input 
-                                                type="text" 
-                                                value={targetName}
-                                                onChange={e => setTargetName(e.target.value)}
-                                                className="flex-1 border border-[#D5D9D9] dark:border-gray-600 rounded-lg px-4 py-3 font-bold text-[#232F3E] dark:text-white dark:bg-gray-700 focus:ring-2 focus:ring-[#FF9900] outline-none transition-all text-lg"
-                                                placeholder={t('newNamePlaceholder')}
-                                                dir={dir}
-                                            />
-                                            <button 
-                                                onClick={handleExecuteChange}
-                                                disabled={isProcessing || !targetName || targetName === selectedAgent.name}
-                                                className="bg-[#FF9900] hover:bg-[#e68a00] text-white px-8 py-2 rounded-lg font-bold shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center min-w-[120px]"
-                                            >
-                                                {isProcessing ? (
-                                                    <i className="fa-solid fa-circle-notch fa-spin text-xl"></i>
-                                                ) : (
-                                                    <>
-                                                        <span className="text-sm">{t('execute')}</span>
-                                                        <span className="text-[9px] opacity-80">Update & Save</span>
-                                                    </>
-                                                )}
-                                            </button>
-                                        </div>
-                                        
-                                        <div className="mt-3 flex items-center gap-6">
-                                            <label className="flex items-center gap-2 cursor-pointer group">
-                                                <input 
-                                                    type="checkbox" 
-                                                    checked={saveAsRule}
-                                                    onChange={e => setSaveAsRule(e.target.checked)}
-                                                    className="w-4 h-4 text-[#FF9900] rounded focus:ring-[#FF9900]"
-                                                />
-                                                <span className="text-sm text-gray-600 dark:text-gray-300 group-hover:text-[#232F3E] dark:group-hover:text-white transition-colors">{t('saveRule')}</span>
-                                            </label>
-                                            
-                                            {targetName !== selectedAgent.name && agentsList.some(a => cleanName(a.name) === cleanName(targetName)) && (
-                                                <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-3 py-1 rounded-full text-xs font-bold animate-pulse">
-                                                    <i className="fa-solid fa-triangle-exclamation"></i>
-                                                    {t('mergeWarning').replace('{name}', targetName)}
-                                                </div>
-                                            )}
-                                        </div>
+                                    <div className="relative">
+                                        <i className={`fa-solid fa-search absolute ${dir==='rtl'?'right-3':'left-3'} top-1/2 -translate-y-1/2 text-gray-400`}></i>
+                                        <input 
+                                            type="text"
+                                            placeholder={t('searchDa')}
+                                            value={searchTerm}
+                                            onChange={e => setSearchTerm(e.target.value)}
+                                            className={`w-full bg-gray-50 dark:bg-gray-800 text-[#232F3E] dark:text-white border border-[#D5D9D9] dark:border-gray-600 rounded-lg py-2 ${dir==='rtl'?'pr-9 pl-3':'pl-9 pr-3'} outline-none focus:border-[#FF9900] transition-colors text-sm font-bold`}
+                                        />
                                     </div>
                                 </div>
-
-                                {/* Date Selection Area */}
-                                <div className="flex-1 overflow-hidden flex flex-col bg-gray-50 dark:bg-[#111315]">
-                                    <div className="p-3 border-b border-[#D5D9D9] dark:border-gray-700 flex justify-between items-center bg-white dark:bg-[#191E26] sticky top-0 z-10">
-                                        <h4 className="font-bold text-gray-700 dark:text-gray-300 text-sm flex items-center gap-2">
-                                            <i className="fa-regular fa-calendar-check text-[#FF9900]"></i>
-                                            {t('actionLog')}
-                                        </h4>
-                                        <div className="flex gap-2">
-                                            <button onClick={() => setSelectedDocIds(new Set(getAgentHistoryDetails(selectedAgent.name).map(r => r.id)))} className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:bg-blue-50 dark:hover:bg-blue-900/20 px-2 py-1 rounded">{t('selectAll')}</button>
-                                            <button onClick={() => setSelectedDocIds(new Set())} className="text-xs text-gray-500 dark:text-gray-400 font-bold hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded">{t('deselectAll')}</button>
+                                
+                                {/* Agent List */}
+                                <div className="flex-1 overflow-y-auto custom-scrollbar">
+                                    {isLoading ? (
+                                        <div className="flex flex-col items-center justify-center h-40 text-[#FF9900]">
+                                            <i className="fa-solid fa-circle-notch fa-spin text-3xl mb-2"></i>
+                                            <span className="font-bold text-sm">{t('loading')}</span>
                                         </div>
-                                    </div>
-                                    
-                                    <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                            {getAgentHistoryDetails(selectedAgent.name).map((record, idx) => (
+                                    ) : filteredAgents.length === 0 ? (
+                                        <div className="p-8 text-center text-gray-500 font-bold">
+                                            {t('noData')}
+                                        </div>
+                                    ) : (
+                                        <div className="divide-y divide-[#D5D9D9] dark:divide-gray-700">
+                                            {filteredAgents.map(agent => (
                                                 <div 
-                                                    key={idx}
-                                                    onClick={() => toggleDocId(record.id)}
-                                                    className={`p-3 rounded-xl border cursor-pointer transition-all flex items-center justify-between group select-none
-                                                        ${selectedDocIds.has(record.id) 
-                                                            ? 'bg-white dark:bg-[#232F3E] border-[#FF9900] shadow-sm ring-1 ring-[#FF9900]/20' 
-                                                            : 'bg-white dark:bg-[#191E26] border-[#D5D9D9] dark:border-gray-700 hover:border-[#D5D9D9] dark:hover:border-gray-600 opacity-60 hover:opacity-100'
-                                                        }`}
+                                                    key={agent.name}
+                                                    onClick={() => handleSelectAgent(agent)}
+                                                    className={`p-3 cursor-pointer transition-all hover:bg-white dark:hover:bg-gray-800 flex justify-between items-center group
+                                                        ${selectedAgent?.name === agent.name ? 'bg-white dark:bg-gray-800 border-l-4 border-l-[#FF9900]' : 'border-l-4 border-transparent'}`}
                                                 >
-                                                    <div className="flex items-center gap-3">
-                                                        <div className={`w-5 h-5 rounded flex items-center justify-center border transition-colors
-                                                            ${selectedDocIds.has(record.id) ? 'bg-[#FF9900] border-[#FF9900]' : 'border-[#D5D9D9] dark:border-gray-600 bg-gray-50 dark:bg-gray-700'}`}>
-                                                            {selectedDocIds.has(record.id) && <i className="fa-solid fa-check text-white text-xs"></i>}
+                                                    <div className="overflow-hidden">
+                                                        <div className={`font-black truncate ${selectedAgent?.name === agent.name ? 'text-[#FF9900]' : 'text-[#232F3E] dark:text-gray-200'}`}>
+                                                            {agent.name}
                                                         </div>
-                                                        <div>
-                                                            <div className="font-bold text-[#232F3E] dark:text-gray-200 font-mono text-sm">{record.date}</div>
-                                                            <div className="text-[10px] text-gray-400">
-                                                                {record.total ? `${record.total} ${t('shipment')}` : 'Incomplete data'}
-                                                            </div>
+                                                        <div className="flex gap-3 text-[10px] font-bold text-gray-500 dark:text-gray-400 mt-1">
+                                                            <span className="flex items-center gap-1"><i className="fa-solid fa-box text-gray-400"></i> {agent.totalOrders} {t('shipment')}</span>
+                                                            <span className="flex items-center gap-1"><i className="fa-regular fa-calendar text-gray-400"></i> {agent.daysWorked} {t('days')}</span>
                                                         </div>
                                                     </div>
-                                                    <div className={`text-xs font-black ${selectedDocIds.has(record.id) ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400'}`}>
-                                                        {record.successRate?.toFixed(0)}%
-                                                    </div>
+                                                    <i className={`fa-solid fa-chevron-${dir==='rtl'?'left':'right'} text-gray-300 group-hover:text-[#FF9900] transition-colors ${selectedAgent?.name === agent.name ? 'text-[#FF9900]' : ''}`}></i>
                                                 </div>
                                             ))}
                                         </div>
-                                    </div>
+                                    )}
                                 </div>
-                            </>
-                        ) : (
-                            <div className="flex-1 flex flex-col items-center justify-center text-gray-300 dark:text-gray-600 bg-gray-50/50 dark:bg-[#111315]">
-                                <i className="fa-solid fa-arrow-right text-6xl mb-4 opacity-20 hidden md:block"></i>
-                                <i className="fa-solid fa-arrow-up text-6xl mb-4 opacity-20 md:hidden"></i>
-                                <p className="text-lg font-bold">{t('selectAgentPrompt')}</p>
                             </div>
-                        )}
+                            
+                            {/* RIGHT PANEL: DETAILS & ACTIONS */}
+                            <div className="flex-1 flex flex-col bg-white dark:bg-[#191E26]">
+                                {selectedAgent ? (
+                                    <>
+                                        {/* Action Header */}
+                                        <div className="p-6 border-b border-[#D5D9D9] dark:border-gray-700 bg-gray-50 dark:bg-[#111315]">
+                                            <div className="flex justify-between items-start mb-6">
+                                                <div>
+                                                    <h2 className="text-2xl font-black text-[#232F3E] dark:text-white mb-1">{selectedAgent.name}</h2>
+                                                    <div className="flex gap-4 text-xs font-bold text-gray-500">
+                                                        <span>{t('totalVolume')}: <span className="text-[#232F3E] dark:text-gray-300">{selectedAgent.totalOrders}</span></span>
+                                                        <span>{t('daysLog')}: <span className="text-[#232F3E] dark:text-gray-300">{selectedAgent.daysWorked}</span></span>
+                                                        <span>{t('lastSeen')}: <span className="text-[#232F3E] dark:text-gray-300">{selectedAgent.lastSeen}</span></span>
+                                                    </div>
+                                                </div>
+                                                
+                                                <button 
+                                                    onClick={handleDeleteGlobally}
+                                                    className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-2 rounded-lg text-xs font-bold transition-colors flex items-center gap-2 border border-red-200"
+                                                    title={t('eraseAgent')}
+                                                >
+                                                    <i className="fa-solid fa-trash-can"></i>
+                                                    <span className="hidden sm:inline">{t('eraseAgent')}</span>
+                                                </button>
+                                            </div>
 
-                        {/* Loading Overlay for Processing */}
-                        {isProcessing && (
-                            <div className="absolute inset-0 bg-white/90 dark:bg-[#191E26]/90 backdrop-blur-sm z-50 flex flex-col items-center justify-center text-[#232F3E] dark:text-white">
-                                <i className="fa-solid fa-gears fa-spin text-5xl text-[#FF9900] mb-6"></i>
-                                <h3 className="text-xl font-bold mb-2">{t('processing')}</h3>
-                                <div className="text-sm text-gray-500 font-mono">
-                                    {processStep === 'db' && 'Updating database records...'}
-                                    {processStep === 'alias' && 'Saving alias rules...'}
-                                    {processStep === 'done' && 'Reloading...'}
-                                </div>
+                                            <div className="bg-white dark:bg-[#191E26] p-4 rounded-xl border border-[#D5D9D9] dark:border-gray-700 shadow-sm">
+                                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                                                    <i className="fa-solid fa-wand-magic-sparkles text-[#FF9900] mr-1"></i> {t('renameAgent')}
+                                                </label>
+                                                
+                                                <div className="flex gap-3">
+                                                    <input 
+                                                        type="text"
+                                                        value={targetName}
+                                                        onChange={e => setTargetName(e.target.value)}
+                                                        className="flex-1 bg-gray-50 dark:bg-gray-800 text-[#232F3E] dark:text-white border border-[#D5D9D9] dark:border-gray-600 rounded-lg px-4 py-2 font-bold outline-none focus:border-[#FF9900] transition-colors"
+                                                        placeholder="Enter new name..."
+                                                    />
+                                                    <button 
+                                                        onClick={handleExecuteChange}
+                                                        disabled={selectedDocIds.size === 0 || isProcessing}
+                                                        className="bg-[#232F3E] dark:bg-white text-white dark:text-[#232F3E] px-6 py-2 rounded-lg font-bold hover:bg-[#131921] dark:hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                                    >
+                                                        {isProcessing ? (
+                                                            <><i className="fa-solid fa-circle-notch fa-spin"></i> {t('processing')}</>
+                                                        ) : (
+                                                            <>
+                                                                <i className="fa-solid fa-bolt text-[#FF9900]"></i>
+                                                                <span>Update {selectedDocIds.size} {t('days')} & Save</span>
+                                                            </>
+                                                        )}
+                                                    </button>
+                                                </div>
+                                                
+                                                <div className="mt-3 flex items-center gap-6">
+                                                    <label className="flex items-center gap-2 cursor-pointer group">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            checked={saveAsRule}
+                                                            onChange={e => setSaveAsRule(e.target.checked)}
+                                                            className="w-4 h-4 text-[#FF9900] rounded focus:ring-[#FF9900]"
+                                                        />
+                                                        <span className="text-sm text-gray-600 dark:text-gray-300 group-hover:text-[#232F3E] dark:group-hover:text-white transition-colors">{t('saveRule')}</span>
+                                                    </label>
+                                                    
+                                                    {targetName !== selectedAgent.name && agentsList.some(a => cleanName(a.name) === cleanName(targetName)) && (
+                                                        <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-3 py-1 rounded-full text-xs font-bold animate-pulse">
+                                                            <i className="fa-solid fa-triangle-exclamation"></i>
+                                                            {t('mergeWarning').replace('{name}', targetName)}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Date Selection Area */}
+                                        <div className="flex-1 overflow-hidden flex flex-col bg-gray-50 dark:bg-[#111315]">
+                                            <div className="p-3 border-b border-[#D5D9D9] dark:border-gray-700 flex justify-between items-center bg-white dark:bg-[#191E26] sticky top-0 z-10">
+                                                <h4 className="font-bold text-gray-700 dark:text-gray-300 text-sm flex items-center gap-2">
+                                                    <i className="fa-regular fa-calendar-check text-[#FF9900]"></i>
+                                                    {t('actionLog')}
+                                                </h4>
+                                                <div className="flex gap-2">
+                                                    <button onClick={() => setSelectedDocIds(new Set(getAgentHistoryDetails(selectedAgent.name).map(r => r.id)))} className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:bg-blue-50 dark:hover:bg-blue-900/20 px-2 py-1 rounded">{t('selectAll')}</button>
+                                                    <button onClick={() => setSelectedDocIds(new Set())} className="text-xs text-gray-500 dark:text-gray-400 font-bold hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded">{t('deselectAll')}</button>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                                    {getAgentHistoryDetails(selectedAgent.name).map((record, idx) => (
+                                                        <div 
+                                                            key={record.id || idx}
+                                                            onClick={() => toggleDocId(record.id)}
+                                                            className={`p-3 rounded-xl border cursor-pointer transition-all flex items-center justify-between group select-none
+                                                                ${selectedDocIds.has(record.id) 
+                                                                    ? 'bg-white dark:bg-[#232F3E] border-[#FF9900] shadow-sm ring-1 ring-[#FF9900]/20' 
+                                                                    : 'bg-white dark:bg-[#191E26] border-[#D5D9D9] dark:border-gray-700 hover:border-[#D5D9D9] dark:hover:border-gray-600 opacity-60 hover:opacity-100'
+                                                                }`}
+                                                        >
+                                                            <div className="flex items-center gap-3">
+                                                                <div className={`w-5 h-5 rounded flex items-center justify-center border transition-colors
+                                                                    ${selectedDocIds.has(record.id) ? 'bg-[#FF9900] border-[#FF9900]' : 'border-[#D5D9D9] dark:border-gray-600 bg-gray-50 dark:bg-gray-700'}`}>
+                                                                    {selectedDocIds.has(record.id) && <i className="fa-solid fa-check text-white text-xs"></i>}
+                                                                </div>
+                                                                <div>
+                                                                    <div className="font-bold text-[#232F3E] dark:text-gray-200 font-mono text-sm">{record.date}</div>
+                                                                    <div className="text-[10px] text-gray-400">
+                                                                        {record.total ? `${record.total} ${t('shipment')}` : 'Incomplete data'}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                            <div className={`text-xs font-black ${selectedDocIds.has(record.id) ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400'}`}>
+                                                                {record.successRate?.toFixed(0)}%
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="flex-1 flex flex-col items-center justify-center text-gray-300 dark:text-gray-600 bg-gray-50/50 dark:bg-[#111315]">
+                                        <i className="fa-solid fa-arrow-right text-6xl mb-4 opacity-20 hidden md:block"></i>
+                                        <i className="fa-solid fa-arrow-up text-6xl mb-4 opacity-20 md:hidden"></i>
+                                        <p className="text-lg font-bold">{t('selectAgentPrompt')}</p>
+                                    </div>
+                                )}
                             </div>
-                        )}
-                    </div>
+                        </>
+                    )}
+
+                    {activeTab === 'rules' && (
+                        <div className="flex-1 overflow-y-auto p-6 bg-gray-50 dark:bg-[#111315]">
+                            <h2 className="text-xl font-bold mb-4 text-[#232F3E] dark:text-white">قواعد تعديل الأسماء (Aliases)</h2>
+                            <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
+                                هذه هي القواعد المحفوظة التي تقوم تلقائياً بتغيير أسماء المناديب عند رفع الملفات. يمكنك تعديل الاسم الجديد أو حذف القاعدة تماماً.
+                            </p>
+                            
+                            {Object.keys(aliases).length === 0 ? (
+                                <div className="text-center py-10 text-gray-500">لا توجد قواعد تعديل محفوظة حالياً.</div>
+                            ) : (
+                                <div className="bg-white dark:bg-[#191E26] rounded-xl shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden">
+                                    <table className="w-full text-sm text-left rtl:text-right">
+                                        <thead className="bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300">
+                                            <tr>
+                                                <th className="px-6 py-4 font-black">الاسم الأصلي (في الشيت)</th>
+                                                <th className="px-6 py-4 font-black">الاسم المعدل (الجديد)</th>
+                                                <th className="px-6 py-4 font-black text-center">إجراءات</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                                            {Object.entries(aliases).map(([original, target]) => (
+                                                <tr key={original} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                                                    <td className="px-6 py-3 font-bold text-gray-700 dark:text-gray-300">
+                                                        <div className="bg-rose-50 dark:bg-rose-900/20 text-rose-700 dark:text-rose-400 px-3 py-1.5 rounded-lg inline-block border border-rose-200 dark:border-rose-800/50">
+                                                            {original}
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-3 font-bold">
+                                                        <input 
+                                                            type="text" 
+                                                            defaultValue={target}
+                                                            onBlur={(e) => handleUpdateRule(original, e.target.value)}
+                                                            className="border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-[#232F3E] dark:text-white outline-none focus:border-[#FF9900] w-full max-w-xs transition-colors"
+                                                        />
+                                                    </td>
+                                                    <td className="px-6 py-3 text-center">
+                                                        <button 
+                                                            onClick={() => handleDeleteRule(original)}
+                                                            className="text-rose-600 hover:text-white hover:bg-rose-600 px-3 py-1.5 rounded-lg transition-colors font-bold flex items-center justify-center gap-2 mx-auto"
+                                                        >
+                                                            <i className="fa-solid fa-trash"></i>
+                                                            <span className="hidden sm:inline">حذف القاعدة</span>
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Loading Overlay for Processing */}
+                    {isProcessing && (
+                        <div className="absolute inset-0 bg-white/90 dark:bg-[#191E26]/90 backdrop-blur-sm z-50 flex flex-col items-center justify-center text-[#232F3E] dark:text-white">
+                            <i className="fa-solid fa-gears fa-spin text-5xl text-[#FF9900] mb-6"></i>
+                            <h3 className="text-xl font-bold mb-2">{t('processing')}</h3>
+                            <div className="text-sm text-gray-500 font-mono">
+                                {processStep === 'db' && 'Updating database records...'}
+                                {processStep === 'alias' && 'Saving alias rules...'}
+                                {processStep === 'done' && 'Reloading...'}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

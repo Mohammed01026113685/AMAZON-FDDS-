@@ -431,7 +431,7 @@ const AgentDetailModal = ({ agent, onClose, showNumbers = true }: { agent: any, 
                             
                             <div className="bg-white dark:bg-[#191E26] rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
                                 <table className="w-full text-sm text-center">
-                                    <thead className="bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 uppercase text-xs"><tr><th className="p-4">{t('days')}</th><th className="p-4">{t('performance')}</th><th className="p-4">{t('delivered')}</th><th className="p-4">{t('total')}</th><th className="p-4">Trackings</th></tr></thead>
+                                    <thead className="bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 uppercase text-xs"><tr><th className="p-4">التاريخ</th><th className="p-4">{t('performance')}</th><th className="p-4">{t('delivered')}</th><th className="p-4">{t('total')}</th><th className="p-4">Trackings</th></tr></thead>
                                     <tbody className="divide-y divide-gray-50 dark:divide-gray-700">{agent.history.map((h: any, i: number) => (
                                         <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                                             <td className="p-3 font-mono text-gray-500 dark:text-gray-400 font-bold">{h.date}</td>
@@ -499,9 +499,15 @@ const HistoryDashboard: React.FC<HistoryDashboardProps> = ({ history, isAdmin, i
     const [tempAutoSort, setTempAutoSort] = useState(autoSortByFailed);
     const [showNumbers, setShowNumbers] = useState(true);
 
+    // Target Missers Filters State
+    const [targetSearch, setTargetSearch] = useState('');
+    const [targetMinMissed, setTargetMinMissed] = useState(1);
+    const [targetMaxRate, setTargetMaxRate] = useState(94);
+    const [targetSortBy, setTargetSortBy] = useState('missed_desc');
+
     // --- LOGIC: OVERVIEW ---
-    const { filteredData, stationStats, agentStats, topPerformers, lowPerformers, allFilteredTrackings } = useMemo(() => {
-        if (!history || history.length === 0) return { filteredData: [], stationStats: [], agentStats: [], topPerformers: [], lowPerformers: [], allFilteredTrackings: [] };
+    const { filteredData, stationStats, agentStats, topPerformers, lowPerformers, allFilteredTrackings, targetMissers } = useMemo(() => {
+        if (!history || history.length === 0) return { filteredData: [], stationStats: [], agentStats: [], topPerformers: [], lowPerformers: [], allFilteredTrackings: [], targetMissers: [] };
         
         const start = new Date(startDate).getTime();
         const end = new Date(endDate).getTime();
@@ -544,7 +550,18 @@ const HistoryDashboard: React.FC<HistoryDashboardProps> = ({ history, isAdmin, i
             });
         });
 
-        const agentsArray = Object.values(agentsMap).map(ag => ({ ...ag, successRate: ag.total > 0 ? (ag.delivered / ag.total) * 100 : 0 }));
+        const agentsArray = Object.values(agentsMap).map(ag => {
+            const successRate = ag.total > 0 ? (ag.delivered / ag.total) * 100 : 0;
+            const missedDays = ag.history.filter((h) => h.successRate < 94 && h.total > 0);
+            return {
+                ...ag,
+                successRate,
+                missedDaysCount: missedDays.length,
+                missedDates: missedDays.map(m => m.date).join(', '),
+                missedDetails: missedDays
+            };
+        });
+        const targetMissers = [...agentsArray].filter(a => a.missedDaysCount > 0).sort((a, b) => b.missedDaysCount - a.missedDaysCount);
         const meaningfulAgents = agentsArray.filter(a => a.total > 5);
 
         const topPerformers = [...meaningfulAgents].sort((a, b) => b.successRate - a.successRate).slice(0, 10);
@@ -576,13 +593,14 @@ const HistoryDashboard: React.FC<HistoryDashboardProps> = ({ history, isAdmin, i
             });
         });
 
-        return { 
-            filteredData: filtered, 
-            stationStats: stationChartData, 
-            agentStats: sortedAgents.filter(a => a.name.toLowerCase().includes(searchTerm.toLowerCase())),
+        return {
+            filteredData: filtered,
+            stationStats: stationChartData,
+            agentStats: sortedAgents.filter(a => (a.name || "").toLowerCase().includes((searchTerm || "").toLowerCase())),
             topPerformers,
             lowPerformers,
-            allFilteredTrackings
+            allFilteredTrackings,
+            targetMissers
         };
     }, [history, startDate, endDate, searchTerm, filterStation]);
 
@@ -736,6 +754,25 @@ const HistoryDashboard: React.FC<HistoryDashboardProps> = ({ history, isAdmin, i
         }
     };
 
+    const filteredTargetMissers = useMemo(() => {
+        let result = targetMissers.filter(a => {
+            const matchesSearch = (a.name || "").toLowerCase().includes(targetSearch.toLowerCase());
+            const matchesMinMissed = a.missedDaysCount >= targetMinMissed;
+            const matchesMaxRate = a.successRate <= targetMaxRate;
+            return matchesSearch && matchesMinMissed && matchesMaxRate;
+        });
+
+        result.sort((a, b) => {
+            if (targetSortBy === 'missed_desc') return b.missedDaysCount - a.missedDaysCount;
+            if (targetSortBy === 'missed_asc') return a.missedDaysCount - b.missedDaysCount;
+            if (targetSortBy === 'rate_asc') return a.successRate - b.successRate;
+            if (targetSortBy === 'rate_desc') return b.successRate - a.successRate;
+            return 0;
+        });
+
+        return result;
+    }, [targetMissers, targetSearch, targetMinMissed, targetMaxRate, targetSortBy]);
+
     // --- HANDLERS ---
     const setQuickDate = (days: number) => {
         const end = new Date(); const start = new Date(); start.setDate(end.getDate() - days);
@@ -762,6 +799,9 @@ const HistoryDashboard: React.FC<HistoryDashboardProps> = ({ history, isAdmin, i
                     منافسة الفروع
                 </button>
 
+                <button onClick={() => setActiveTab('target')} className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${activeTab === 'target' ? 'bg-rose-500 text-white shadow-lg' : 'text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700'}`}>
+                    <i className="fa-solid fa-bullseye"></i> التارجت
+                </button>
                 <button onClick={() => setActiveTab('advanced')} className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${activeTab === 'advanced' ? 'bg-[#FF9900] text-[#232F3E] shadow-lg' : 'text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700'}`}>
                     <i className="fa-solid fa-trophy"></i> {t('advancedReports')}
                 </button>
@@ -933,7 +973,7 @@ const HistoryDashboard: React.FC<HistoryDashboardProps> = ({ history, isAdmin, i
                         </div>
                         <div className="overflow-x-auto">
                             <table className="w-full text-center text-sm">
-                                <thead className="bg-[#232F3E] text-white"><tr><th className="p-4 text-right">{t('agentName')}</th><th className="p-4 hidden sm:table-cell">Bar</th><th className="p-4">{t('days')}</th><th className="p-4">Vol</th><th className="p-4">Rate</th></tr></thead>
+                                <thead className="bg-[#232F3E] text-white"><tr><th className="p-4 text-right">{t('agentName')}</th><th className="p-4 hidden sm:table-cell">Bar</th>{/* <th className="p-4">{t('days')}</th> */}<th className="p-4">Vol</th><th className="p-4">Rate</th></tr></thead>
                                 <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
                                     {agentStats.map((agent: any, i: number) => (
                                         <tr key={i} onClick={() => setSelectedAgent(agent)} className="hover:bg-blue-50 dark:hover:bg-blue-900/10 cursor-pointer group transition-colors">
@@ -943,7 +983,7 @@ const HistoryDashboard: React.FC<HistoryDashboardProps> = ({ history, isAdmin, i
                                                     <div className="h-full rounded-full" style={{ width: `${agent.successRate}%`, backgroundColor: getRateColor(agent.successRate) }}></div>
                                                 </div>
                                             </td>
-                                            <td className="p-4 text-gray-600 dark:text-gray-400">{agent.daysWorked}</td>
+                                            {/*  */}
                                             <td className="p-4 font-mono text-gray-500 dark:text-gray-400">{showNumbers ? agent.total : '***'}</td>
                                             <td className={`p-4 font-black ${getRateClass(agent.successRate).split(' ')[0]}`}>{agent.successRate.toFixed(1)}%</td>
                                         </tr>
@@ -956,6 +996,97 @@ const HistoryDashboard: React.FC<HistoryDashboardProps> = ({ history, isAdmin, i
             )}
 
             {/* --- TAB 2: ADVANCED REPORTS (Formerly Yearly) --- */}
+            {activeTab === 'target' && (
+                <div className="animate-slide-up space-y-8">
+                    <div className="modern-card overflow-hidden">
+                        <div className="p-5 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-[#191E26] flex flex-col gap-4">
+                            <div className="flex justify-between items-center">
+                                <h3 className="font-bold text-[#232F3E] dark:text-white text-lg">
+                                    المناديب الأقل من 94% ({filteredTargetMissers.length})
+                                </h3>
+                            </div>
+                            
+                            {/* STRONG FILTERS */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                                <div className="relative">
+                                    <i className="fa-solid fa-search absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                                    <input
+                                        type="text"
+                                        placeholder="بحث باسم المندوب..."
+                                        value={targetSearch}
+                                        onChange={e => setTargetSearch(e.target.value)}
+                                        className="border border-gray-200 dark:border-gray-700 rounded-xl pl-4 pr-9 py-2 text-sm w-full outline-none focus:ring-2 focus:ring-[#FF9900] bg-white dark:bg-[#2A2F3A] dark:text-white"
+                                    />
+                                </div>
+                                <select 
+                                    value={targetMinMissed} 
+                                    onChange={e => setTargetMinMissed(Number(e.target.value))}
+                                    className="border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-[#FF9900] bg-white dark:bg-[#2A2F3A] dark:text-white"
+                                >
+                                    <option value={1}>الحد الأدنى للأيام (1 يوم فأكثر)</option>
+                                    <option value={2}>يومين فأكثر</option>
+                                    <option value={3}>3 أيام فأكثر</option>
+                                    <option value={5}>5 أيام فأكثر</option>
+                                    <option value={10}>10 أيام فأكثر</option>
+                                </select>
+                                <select 
+                                    value={targetMaxRate} 
+                                    onChange={e => setTargetMaxRate(Number(e.target.value))}
+                                    className="border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-[#FF9900] bg-white dark:bg-[#2A2F3A] dark:text-white"
+                                >
+                                    <option value={100}>متوسط النسبة (الكل)</option>
+                                    <option value={94}>أقل من 94%</option>
+                                    <option value={90}>أقل من 90%</option>
+                                    <option value={85}>أقل من 85%</option>
+                                    <option value={80}>أقل من 80%</option>
+                                </select>
+                                <select 
+                                    value={targetSortBy} 
+                                    onChange={e => setTargetSortBy(e.target.value)}
+                                    className="border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-[#FF9900] bg-white dark:bg-[#2A2F3A] dark:text-white"
+                                >
+                                    <option value="missed_desc">ترتيب: الأكثر إخفاقاً (تنازلي)</option>
+                                    <option value="missed_asc">ترتيب: الأقل إخفاقاً (تصاعدي)</option>
+                                    <option value="rate_asc">ترتيب: أسوأ نسبة (تصاعدي)</option>
+                                    <option value="rate_desc">ترتيب: أفضل نسبة (تنازلي)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div className="overflow-x-auto max-h-[600px] custom-scrollbar">
+                            <table className="w-full text-center text-sm">
+                                <thead className="bg-[#232F3E] text-white sticky top-0 z-10">
+                                    <tr>
+                                        <th className="p-4">#</th>
+                                        <th className="p-4">اسم المندوب</th>
+                                        <th className="p-4 text-red-400">أيام تحت الهدف</th>
+                                        
+                                        <th className="p-4">متوسط النسبة</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
+                                    {filteredTargetMissers.length > 0 ? (
+                                        filteredTargetMissers.map((agent, i) => (
+                                            <tr
+                                                key={i}
+                                                onClick={() => setSelectedAgent(agent)}
+                                                className="hover:bg-rose-50 dark:hover:bg-rose-900/10 transition-colors cursor-pointer group"
+                                            >
+                                                <td className="p-4 font-black text-rose-500 text-lg">#{i + 1}</td>
+                                                <td className="p-4 font-bold text-[#232F3E] dark:text-gray-200">{agent.name}</td>
+                                                <td className="p-4 font-bold text-rose-600 dark:text-rose-400">{agent.missedDaysCount} يوم</td>
+                                                
+                                                <td className={`p-4 font-black ${getRateClass(agent.successRate).split(' ')[0]}`}>{agent.successRate.toFixed(1)}%</td>
+                                            </tr>
+                                        ))
+                                    ) : (
+                                        <tr><td colSpan={4} className="p-8 text-gray-400">لا يوجد مناديب تحت التارجت في هذه الفترة</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            )}
             {activeTab === 'advanced' && (
                 <div className="animate-slide-up space-y-8">
                     {/* Header & Filters */}
@@ -1115,7 +1246,7 @@ const HistoryDashboard: React.FC<HistoryDashboardProps> = ({ history, isAdmin, i
                         </div>
                         <div className="overflow-x-auto max-h-[500px] custom-scrollbar">
                             <table className="w-full text-center text-sm">
-                                <thead className="bg-[#232F3E] text-white sticky top-0 z-10"><tr><th className="p-4">{t('rank')}</th><th className="p-4">{t('agentName')}</th><th className="p-4">{t('days')}</th><th className="p-4">Vol</th><th className="p-4">Rate</th></tr></thead>
+                                <thead className="bg-[#232F3E] text-white sticky top-0 z-10"><tr><th className="p-4">{t('rank')}</th><th className="p-4">{t('agentName')}</th>{/* <th className="p-4">{t('days')}</th> */}<th className="p-4">Vol</th><th className="p-4">Rate</th></tr></thead>
                                 <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
                                     {advancedData.report.length > 0 ? (
                                         advancedData.report.map((a, i) => (
@@ -1126,13 +1257,13 @@ const HistoryDashboard: React.FC<HistoryDashboardProps> = ({ history, isAdmin, i
                                             >
                                                 <td className="p-4 font-black text-[#FF9900] text-lg">#{i + 1}</td>
                                                 <td className="p-4 font-bold text-[#232F3E] dark:text-gray-200">{a.name}</td>
-                                                <td className="p-4 text-gray-600 dark:text-gray-400">{a.daysWorked}</td>
+                                                {/* <td className="p-4 text-gray-600 dark:text-gray-400">{a.daysWorked}</td> */}
                                                 <td className="p-4 font-mono text-gray-500 dark:text-gray-400">{showNumbers ? a.total : '***'}</td>
                                                 <td className={`p-4 font-black ${getRateClass(a.successRate)}`}>{a.successRate.toFixed(1)}%</td>
                                             </tr>
                                         ))
                                     ) : (
-                                        <tr><td colSpan={5} className="p-8 text-gray-400">{t('noData')}</td></tr>
+                                        <tr><td colSpan={4} className="p-8 text-gray-400">{t('noData')}</td></tr>
                                     )}
                                 </tbody>
                             </table>
@@ -1304,7 +1435,7 @@ const HistoryDashboard: React.FC<HistoryDashboardProps> = ({ history, isAdmin, i
                         </div>
                         <div className="max-h-[500px] overflow-y-auto custom-scrollbar">
                             <table className="w-full text-sm text-center">
-                                <thead className="bg-[#232F3E] text-white sticky top-0"><tr><th className="p-4">{t('days')}</th><th className="p-4">{t('volume')}</th><th className="p-4">{t('performance')}</th><th className="p-4">...</th></tr></thead>
+                                <thead className="bg-[#232F3E] text-white sticky top-0"><tr><th className="p-4">التاريخ</th><th className="p-4">{t('volume')}</th><th className="p-4">{t('performance')}</th><th className="p-4">...</th></tr></thead>
                                 <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
                                     {filteredManagementRecords.length > 0 ? (
                                         filteredManagementRecords.map((rec, i) => (
